@@ -39,15 +39,19 @@ class ToyDenseMlp(nn.Module):
 class ToyDenseLayer(nn.Module):
     def __init__(self) -> None:
         super().__init__()
+        self.input_layernorm = nn.RMSNorm(4)
         self.self_attn = ToyDenseAttention()
+        self.post_attention_layernorm = nn.RMSNorm(4)
         self.mlp = ToyDenseMlp()
 
 
 class ToyLinearAttention(nn.Module):
     def __init__(self) -> None:
         super().__init__()
+        self.dt_bias = mx.zeros(shape=(4,))
         self.in_proj_qkv = nn.Linear(4, 12, bias=False)
         self.in_proj_z = nn.Linear(4, 4, bias=False)
+        self.norm = nn.RMSNorm(4)
 
 
 class ToyHybridLayer(nn.Module):
@@ -101,8 +105,6 @@ def test_inject_lora_adapters_auto_supports_heterogeneous_layers() -> None:
     model = ToyModel([ToyHybridLayer(), ToyDenseLayer(), ToyHybridLayer()])
 
     target_keys = inject_lora_adapters(model, LoRAConfig(rank=2, scale=2.0))
-    model.freeze()
-    model.unfreeze(keys=["lora_a", "lora_b"])
 
     assert set(target_keys) == {
         "linear_attn.in_proj_qkv",

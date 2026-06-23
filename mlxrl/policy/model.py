@@ -132,6 +132,7 @@ def injected_lora_target_keys(model: nn.Module) -> tuple[str, ...]:
 def inject_lora_adapters(model: nn.Module, config: LoRAConfig) -> tuple[str, ...]:
     """Inject MLX-LM LoRA layers into all attention and MLP projections."""
 
+    model.freeze()
     layer_count = len(get_transformer_layers(model))
     lora_config: dict[str, Any] = {
         "rank": config.rank,
@@ -161,7 +162,6 @@ def strict_lora_config(
         dropout=dropout,
         target_suffixes=DEFAULT_LORA_TARGET_SUFFIXES,
     )
-
 
 
 def trainable_leaf_paths(model_or_params: Any) -> tuple[str, ...]:
