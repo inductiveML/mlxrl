@@ -1,0 +1,42 @@
+[project]
+name = "mlxrl"
+version = "0.1.0"
+description = "Small single-process RL post-training for LLMs on Apple Silicon with MLX."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mlx>=0.31.0",
+    "mlx-lm>=0.31.0",
+]
+
+[project.scripts]
+mlxrl = "mlxrl.cli:main"
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.390",
+    "pytest>=8.3.0",
+    "ruff>=0.8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [
+    ".uv-cache",
+    ".venv",
+    ".uv-python",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+reportMissingTypeStubs = "none"
+include = ["mlxrl", "tests"]
