@@ -151,6 +151,10 @@ def dual_logprobs(
             completion_token_ids,
             pad_token_id,
         )
+        mx.eval(  # Reference sync: materialize logits before restoring LoRA scales.
+            reference.logprobs,
+            reference.mask,
+        )
     return DualLogprobs(
         policy=policy.logprobs,
         reference=reference.logprobs,

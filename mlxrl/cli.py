@@ -11,7 +11,16 @@ from typing import Any
 import mlx.core as mx
 import mlx.optimizers as optim
 
-from mlxrl.algo.grpo import approximate_kl, group_normalize_rewards, grpo_loss
+from mlxrl.algo.grpo import (
+    DAPOAlgorithm,
+    DrGRPOAlgorithm,
+    GRPOAlgorithm,
+    GSPOAlgorithm,
+    PolicyAlgorithm,
+    approximate_kl,
+    group_normalize_rewards,
+    grpo_loss,
+)
 from mlxrl.data.gsm8k import (
     MINI_GSM8K,
     format_gsm8k_answer_only_prompt,
@@ -121,6 +130,38 @@ def _sampling_config(args: argparse.Namespace) -> SamplingConfig:
     )
 
 
+def _clip_value(raw: str, default: float) -> float | None:
+    if raw == "default":
+        return default
+    if raw.lower() in {"none", "off", "disabled"}:
+        return None
+    return float(raw)
+
+
+def _algorithm_from_args(args: argparse.Namespace) -> PolicyAlgorithm:
+    name = args.algorithm.lower().replace("_", "-")
+    if name == "grpo":
+        return GRPOAlgorithm()
+    if name in {"dr-grpo", "drgrpo"}:
+        return DrGRPOAlgorithm(
+            normalize_rewards=args.drgrpo_normalize_rewards,
+            loss_reduction=args.drgrpo_loss_reduction,
+            max_tokens=args.drgrpo_max_tokens or args.max_tokens,
+        )
+    if name == "dapo":
+        return DAPOAlgorithm(
+            clip_low=_clip_value(args.clip_low, 0.2),
+            clip_high=_clip_value(args.clip_high, 0.28),
+        )
+    if name == "gspo":
+        return GSPOAlgorithm(
+            importance=args.gspo_importance,
+            clip_low=_clip_value(args.clip_low, 3e-4),
+            clip_high=_clip_value(args.clip_high, 4e-4),
+        )
+    raise ValueError(f"Unknown algorithm {args.algorithm!r}.")
+
+
 def _completion_rewards(
     completions: Sequence[Any],
     answers: Sequence[str],
@@ -209,6 +250,8 @@ def _phase1_gsm8k(args: argparse.Namespace) -> int:
     optimizer = optim.Adam(learning_rate=args.learning_rate)
     pad_token_id = pad_token_id_from_tokenizer(tokenizer)
     sampling = _sampling_config(args)
+    algorithm = _algorithm_from_args(args)
+    print(f"algorithm: {algorithm.name}")
 
     reward_history: list[float] = []
     kl_history: list[float] = []
@@ -243,6 +286,7 @@ def _phase1_gsm8k(args: argparse.Namespace) -> int:
             group_size=args.group_size,
             pad_token_id=pad_token_id,
             use_checkpoint=args.checkpoint_completion_forward,
+            algorithm=algorithm,
         )
         metrics = optimizer_step(
             model=model,
@@ -251,6 +295,7 @@ def _phase1_gsm8k(args: argparse.Namespace) -> int:
             beta=args.beta,
             pad_token_id=pad_token_id,
             use_checkpoint=args.checkpoint_completion_forward,
+            algorithm=algorithm,
         )
         reward_history.append(metrics.mean_reward)
         kl_history.append(metrics.kl)
@@ -263,6 +308,7 @@ def _phase1_gsm8k(args: argparse.Namespace) -> int:
             f"accuracy={sum(accuracies) / len(accuracies):.4f} "
             f"format={sum(formats) / len(formats):.4f} "
             f"kl={metrics.kl:.6f} "
+            f"clip={metrics.clip_fraction:.6f} "
             f"loss={metrics.loss:.6f}",
             flush=True,
         )
@@ -299,6 +345,7 @@ def _phase1_gsm8k(args: argparse.Namespace) -> int:
         advantages=final_batch.advantages,
         loss=mx.array(final_metrics.loss, dtype=mx.float32),
         kl=mx.array(final_metrics.kl, dtype=mx.float32),
+        clip_fraction=mx.array(final_metrics.clip_fraction, dtype=mx.float32),
     )
     print(f"reference_output: {output}")
     return 0
@@ -460,6 +507,33 @@ def build_parser() -> argparse.ArgumentParser:
     gsm8k.add_argument("--seed", type=int, default=7)
     gsm8k.add_argument("--beta", type=float, default=0.04)
     gsm8k.add_argument("--learning-rate", type=float, default=1e-5)
+    gsm8k.add_argument(
+        "--algorithm",
+        choices=["grpo", "dr-grpo", "dapo", "gspo"],
+        default="grpo",
+    )
+    gsm8k.add_argument(
+        "--clip-low",
+        default="default",
+        help="Algorithm clip-low epsilon, or 'none' to disable clipping.",
+    )
+    gsm8k.add_argument(
+        "--clip-high",
+        default="default",
+        help="Algorithm clip-high epsilon, or 'none' to disable clipping.",
+    )
+    gsm8k.add_argument(
+        "--gspo-importance",
+        choices=["sequence", "token"],
+        default="sequence",
+    )
+    gsm8k.add_argument("--drgrpo-normalize-rewards", action="store_true")
+    gsm8k.add_argument(
+        "--drgrpo-loss-reduction",
+        choices=["sequence_max_tokens", "token_mean"],
+        default="sequence_max_tokens",
+    )
+    gsm8k.add_argument("--drgrpo-max-tokens", type=int, default=None)
     gsm8k.add_argument("--rank", type=int, default=8)
     gsm8k.add_argument("--scale", type=float, default=20.0)
     gsm8k.add_argument("--dropout", type=float, default=0.0)

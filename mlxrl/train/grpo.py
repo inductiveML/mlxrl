@@ -9,7 +9,7 @@ import mlx.core as mx
 import mlx.nn as nn
 import mlx.optimizers as optim
 
-from mlxrl.algo.grpo import GRPOLossMetrics, group_normalize_rewards, grpo_loss
+from mlxrl.algo.grpo import AlgorithmLossMetrics, GRPOAlgorithm, PolicyAlgorithm
 from mlxrl.policy.logprobs import completion_logprobs, dual_logprobs
 from mlxrl.rollout.naive import Completion
 
@@ -35,6 +35,7 @@ class StepMetrics:
     policy_gradient_loss: float
     kl: float
     mean_ratio: float
+    clip_fraction: float
     mean_reward: float
 
 
@@ -45,6 +46,7 @@ def batch_from_rollouts(
     group_size: int,
     pad_token_id: int,
     use_checkpoint: bool = False,
+    algorithm: PolicyAlgorithm | None = None,
 ) -> GRPOBatch:
     """Compute old policy/ref logprobs and group-normalized advantages."""
 
@@ -62,8 +64,14 @@ def batch_from_rollouts(
         pad_token_id,
         use_checkpoint=use_checkpoint,
     )
+    mx.eval(  # Logprob sync: freeze rollout/ref logprobs before adapter mutation.
+        dual.policy,
+        dual.reference,
+        dual.mask,
+    )
+    active_algorithm = algorithm or GRPOAlgorithm()
     reward_array = mx.array(list(rewards), dtype=mx.float32)
-    advantages = group_normalize_rewards(reward_array, group_size=group_size)
+    advantages = active_algorithm.advantages(reward_array, group_size=group_size)
     return GRPOBatch(
         prompt_token_ids=prompt_token_ids,
         completion_token_ids=completion_token_ids,
@@ -81,9 +89,11 @@ def grpo_metrics_from_batch(
     beta: float,
     pad_token_id: int,
     use_checkpoint: bool = False,
-) -> GRPOLossMetrics:
+    algorithm: PolicyAlgorithm | None = None,
+) -> AlgorithmLossMetrics:
     """Recompute policy logprobs and evaluate GRPO metrics."""
 
+    active_algorithm = algorithm or GRPOAlgorithm()
     current = completion_logprobs(
         model,
         batch.prompt_token_ids,
@@ -91,7 +101,7 @@ def grpo_metrics_from_batch(
         pad_token_id,
         use_checkpoint=use_checkpoint,
     )
-    return grpo_loss(
+    return active_algorithm.loss(
         policy_logprobs=current.logprobs,
         old_policy_logprobs=batch.old_policy_logprobs,
         reference_logprobs=batch.reference_logprobs,
@@ -108,41 +118,55 @@ def optimizer_step(
     beta: float,
     pad_token_id: int,
     use_checkpoint: bool = False,
+    algorithm: PolicyAlgorithm | None = None,
 ) -> StepMetrics:
     """Run value_and_grad over currently trainable adapter parameters once."""
 
-    def loss_fn(model: nn.Module) -> tuple[mx.array, tuple[mx.array, mx.array, mx.array]]:
+    active_algorithm = algorithm or GRPOAlgorithm()
+
+    def loss_fn(
+        model: nn.Module,
+    ) -> tuple[mx.array, tuple[mx.array, mx.array, mx.array, mx.array]]:
         metrics = grpo_metrics_from_batch(
             model,
             batch,
             beta,
             pad_token_id,
             use_checkpoint=use_checkpoint,
+            algorithm=active_algorithm,
         )
         return metrics.loss, (
             metrics.policy_gradient_loss,
             metrics.kl,
             metrics.mean_ratio,
+            metrics.clip_fraction,
         )
 
     value_and_grad = nn.value_and_grad(model, loss_fn)
-    (loss, (policy_gradient_loss, kl, mean_ratio)), gradients = value_and_grad(model)
-    optimizer.update(model, gradients)
+    (loss, (policy_gradient_loss, kl, mean_ratio, clip_fraction)), gradients = (
+        value_and_grad(model)
+    )
     mean_reward = mx.mean(batch.rewards)
-    mx.eval(  # Optimizer sync: materialize updated adapter weights and scalar diagnostics.
-        model.state,
-        optimizer.state,
+    mx.eval(  # Optimizer pre-step sync: freeze gradients/diagnostics before weight mutation.
+        gradients,
         loss,
         policy_gradient_loss,
         kl,
         mean_ratio,
+        clip_fraction,
         mean_reward,
+    )
+    optimizer.update(model, gradients)
+    mx.eval(  # Optimizer sync: materialize updated adapter weights and optimizer state.
+        model.state,
+        optimizer.state,
     )
     return StepMetrics(
         loss=float(loss.item()),
         policy_gradient_loss=float(policy_gradient_loss.item()),
         kl=float(kl.item()),
         mean_ratio=float(mean_ratio.item()),
+        clip_fraction=float(clip_fraction.item()),
         mean_reward=float(mean_reward.item()),
     )
 
