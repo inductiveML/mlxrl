@@ -44,6 +44,7 @@ def batch_from_rollouts(
     rewards: Sequence[float],
     group_size: int,
     pad_token_id: int,
+    use_checkpoint: bool = False,
 ) -> GRPOBatch:
     """Compute old policy/ref logprobs and group-normalized advantages."""
 
@@ -54,7 +55,13 @@ def batch_from_rollouts(
 
     prompt_token_ids = tuple(completion.prompt_tokens for completion in completions)
     completion_token_ids = tuple(completion.completion_tokens for completion in completions)
-    dual = dual_logprobs(model, prompt_token_ids, completion_token_ids, pad_token_id)
+    dual = dual_logprobs(
+        model,
+        prompt_token_ids,
+        completion_token_ids,
+        pad_token_id,
+        use_checkpoint=use_checkpoint,
+    )
     reward_array = mx.array(list(rewards), dtype=mx.float32)
     advantages = group_normalize_rewards(reward_array, group_size=group_size)
     return GRPOBatch(
@@ -73,6 +80,7 @@ def grpo_metrics_from_batch(
     batch: GRPOBatch,
     beta: float,
     pad_token_id: int,
+    use_checkpoint: bool = False,
 ) -> GRPOLossMetrics:
     """Recompute policy logprobs and evaluate GRPO metrics."""
 
@@ -81,6 +89,7 @@ def grpo_metrics_from_batch(
         batch.prompt_token_ids,
         batch.completion_token_ids,
         pad_token_id,
+        use_checkpoint=use_checkpoint,
     )
     return grpo_loss(
         policy_logprobs=current.logprobs,
@@ -98,11 +107,18 @@ def optimizer_step(
     batch: GRPOBatch,
     beta: float,
     pad_token_id: int,
+    use_checkpoint: bool = False,
 ) -> StepMetrics:
     """Run value_and_grad over currently trainable adapter parameters once."""
 
     def loss_fn(model: nn.Module) -> tuple[mx.array, tuple[mx.array, mx.array, mx.array]]:
-        metrics = grpo_metrics_from_batch(model, batch, beta, pad_token_id)
+        metrics = grpo_metrics_from_batch(
+            model,
+            batch,
+            beta,
+            pad_token_id,
+            use_checkpoint=use_checkpoint,
+        )
         return metrics.loss, (
             metrics.policy_gradient_loss,
             metrics.kl,

@@ -50,6 +50,7 @@ def completion_logprobs(
     prompt_token_ids: Sequence[Sequence[int]],
     completion_token_ids: Sequence[Sequence[int]],
     pad_token_id: int = 0,
+    use_checkpoint: bool = False,
 ) -> CompletionLogprobs:
     """Gather logprobs assigned to completion tokens in a full forward pass."""
 
@@ -101,7 +102,7 @@ def completion_logprobs(
 
     input_ids = mx.array(input_rows, dtype=mx.int32)
     target_ids = mx.array(target_rows, dtype=mx.int32)
-    logits = model(input_ids)
+    logits = _completion_forward(model, input_ids, use_checkpoint=use_checkpoint)
     all_logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
     target_logprobs = mx.take_along_axis(all_logprobs, target_ids[..., None], axis=-1)
     target_logprobs = mx.squeeze(target_logprobs, axis=-1)
@@ -132,10 +133,17 @@ def dual_logprobs(
     prompt_token_ids: Sequence[Sequence[int]],
     completion_token_ids: Sequence[Sequence[int]],
     pad_token_id: int = 0,
+    use_checkpoint: bool = False,
 ) -> DualLogprobs:
     """Compute policy logprobs and reference logprobs using one model object."""
 
-    policy = completion_logprobs(model, prompt_token_ids, completion_token_ids, pad_token_id)
+    policy = completion_logprobs(
+        model,
+        prompt_token_ids,
+        completion_token_ids,
+        pad_token_id,
+        use_checkpoint=use_checkpoint,
+    )
     with adapters_disabled(model):
         reference = completion_logprobs(
             model,
@@ -148,6 +156,23 @@ def dual_logprobs(
         reference=reference.logprobs,
         mask=policy.mask,
     )
+
+
+def _completion_forward(
+    model: nn.Module,
+    input_ids: mx.array,
+    use_checkpoint: bool,
+) -> mx.array:
+    """Forward completion tokens, optionally checkpointing adapter gradients."""
+
+    if not use_checkpoint:
+        return model(input_ids)
+
+    def inner(params: dict[str, Any], tokens: mx.array) -> mx.array:
+        model.update(params)
+        return model(tokens)
+
+    return mx.checkpoint(inner)(model.trainable_parameters(), input_ids)
 
 
 def pad_token_id_from_tokenizer(tokenizer: Any) -> int:
