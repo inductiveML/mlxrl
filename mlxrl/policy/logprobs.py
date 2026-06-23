@@ -9,7 +9,10 @@ from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
+from mlx_lm.models.cache import make_prompt_cache
 from mlx_lm.tuner.lora import LoRALinear
+
+from mlxrl.rollout.optimized import clone_prompt_cache
 
 
 @dataclass(frozen=True)
@@ -128,6 +131,80 @@ def completion_logprobs(
     )
 
 
+def prefix_cached_completion_logprobs(
+    model: nn.Module,
+    prompt_token_ids: Sequence[Sequence[int]],
+    completion_token_ids: Sequence[Sequence[int]],
+    pad_token_id: int = 0,
+) -> CompletionLogprobs:
+    """Gather completion logprobs after one prefix prefill per unique prompt."""
+
+    if len(prompt_token_ids) != len(completion_token_ids):
+        raise ValueError("prompt_token_ids and completion_token_ids must have the same length.")
+    if not prompt_token_ids:
+        raise ValueError("At least one sequence is required.")
+
+    max_completion_len = max(len(completion) for completion in completion_token_ids)
+    if max_completion_len == 0:
+        raise ValueError("At least one completion token is required.")
+
+    completion_mask_rows = [
+        [1.0] * len(completion) + [0.0] * (max_completion_len - len(completion))
+        for completion in completion_token_ids
+    ]
+    output_rows: list[mx.array | None] = [None] * len(prompt_token_ids)
+    prompt_groups: dict[tuple[int, ...], list[int]] = {}
+    for index, prompt in enumerate(prompt_token_ids):
+        if not prompt:
+            raise ValueError("Prompt token sequences must be non-empty.")
+        if not completion_token_ids[index]:
+            raise ValueError("At least one completion token is required.")
+        prompt_groups.setdefault(tuple(prompt), []).append(index)
+
+    for prompt, row_indices in prompt_groups.items():
+        prefix_cache = _prefill_prompt_prefix(model, prompt)
+        batch_cache = _batch_cache_from_prefix(prefix_cache, len(row_indices))
+        chunks = mx.array(
+            [
+                [prompt[-1]]
+                + list(completion_token_ids[index][:-1])
+                + [pad_token_id] * (max_completion_len - len(completion_token_ids[index]))
+                for index in row_indices
+            ],
+            dtype=mx.int32,
+        )
+        targets = mx.array(
+            [
+                list(completion_token_ids[index])
+                + [pad_token_id] * (max_completion_len - len(completion_token_ids[index]))
+                for index in row_indices
+            ],
+            dtype=mx.int32,
+        )
+        logits = model(chunks, cache=batch_cache)
+        logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
+        grouped_logprobs = mx.squeeze(
+            mx.take_along_axis(logprobs, targets[..., None], axis=-1),
+            axis=-1,
+        )
+        group_mask = mx.array(
+            [
+                [1.0] * len(completion_token_ids[index])
+                + [0.0] * (max_completion_len - len(completion_token_ids[index]))
+                for index in row_indices
+            ],
+            dtype=grouped_logprobs.dtype,
+        )
+        grouped_logprobs = grouped_logprobs * group_mask
+        for group_row, original_index in enumerate(row_indices):
+            output_rows[original_index] = grouped_logprobs[group_row]
+
+    return CompletionLogprobs(
+        logprobs=mx.stack([_require_row(row) for row in output_rows], axis=0),
+        mask=mx.array(completion_mask_rows, dtype=mx.float32),
+    )
+
+
 def dual_logprobs(
     model: nn.Module,
     prompt_token_ids: Sequence[Sequence[int]],
@@ -145,7 +222,7 @@ def dual_logprobs(
         use_checkpoint=use_checkpoint,
     )
     with adapters_disabled(model):
-        reference = completion_logprobs(
+        reference = prefix_cached_completion_logprobs(
             model,
             prompt_token_ids,
             completion_token_ids,
@@ -160,6 +237,28 @@ def dual_logprobs(
         reference=reference.logprobs,
         mask=policy.mask,
     )
+
+
+def _prefill_prompt_prefix(model: nn.Module, prompt: Sequence[int]) -> list[Any]:
+    cache = make_prompt_cache(model)
+    if len(prompt) > 1:
+        prefix = mx.array(list(prompt[:-1]), dtype=mx.int32)
+        _ = model(prefix[None], cache=cache)
+    return cache
+
+
+def _batch_cache_from_prefix(prefix_cache: Sequence[Any], batch_size: int) -> list[Any]:
+    row_caches = [clone_prompt_cache(prefix_cache) for _ in range(batch_size)]
+    return [
+        type(layer_cache).merge([row_cache[layer_index] for row_cache in row_caches])
+        for layer_index, layer_cache in enumerate(prefix_cache)
+    ]
+
+
+def _require_row(row: mx.array | None) -> mx.array:
+    if row is None:
+        raise RuntimeError("Internal error: missing prefix-cached logprob row.")
+    return row
 
 
 def _completion_forward(

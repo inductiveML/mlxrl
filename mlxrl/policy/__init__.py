@@ -7,6 +7,7 @@ from mlxrl.policy.logprobs import (
     completion_logprobs,
     dual_logprobs,
     pad_token_id_from_tokenizer,
+    prefix_cached_completion_logprobs,
 )
 from mlxrl.policy.model import (
     DEFAULT_LORA_TARGET_SUFFIXES,
@@ -30,4 +31,5 @@ __all__ = [
     "dual_logprobs",
     "load_policy_with_lora",
     "pad_token_id_from_tokenizer",
+    "prefix_cached_completion_logprobs",
 ]

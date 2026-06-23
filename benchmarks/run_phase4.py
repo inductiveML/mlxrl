@@ -1,11 +1,16 @@
 #!/usr/bin/env python
 """Phase 4 benchmark harness for mlxrl and MLX baselines.
 
+Rollout tok/s is defined once for every target: generated completion tokens
+only, excluding prompt/prefix tokens and warmup/failed steps, divided by the
+wall-clock seconds spent in the generation phase.
+
 The controller interleaves full benchmark passes across targets, e.g.
-``mlxrl, mlx-lm, mlx-tune, mlx-lm-lora, mlxrl, ...``. Built-in workers cover
-``mlxrl`` and ``mlx-lm``. External RL baselines are command adapters: the
-command should either write JSON to ``$MLXRL_BENCH_OUTPUT`` or print JSON on
-stdout with the same metric fields used by this script.
+``mlxrl, mlx-lm, mlx-lm-g4, mlx-tune, mlx-lm-lora, mlxrl, ...``. Built-in
+workers cover ``mlxrl``, ``mlx-lm``, and ``mlx-lm-g4``. External RL baselines
+are command adapters: the command should either write JSON to
+``$MLXRL_BENCH_OUTPUT`` or print JSON on stdout with the same metric fields used
+by this script.
 """
 
 from __future__ import annotations
@@ -24,8 +29,9 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
-DEFAULT_TARGETS = ("mlxrl", "mlx-lm", "mlx-tune", "mlx-lm-lora")
+DEFAULT_TARGETS = ("mlxrl", "mlx-lm", "mlx-lm-g4", "mlx-tune", "mlx-lm-lora")
 DEFAULT_MODEL = "mlx-community/Qwen3-0.6B-4bit"
+MIN_SYNCED_GRADIENT_STEP_SECONDS = 0.010
 JSON_FIELDS = {
     "target",
     "pass_index",
@@ -33,6 +39,10 @@ JSON_FIELDS = {
     "model",
     "steps",
     "warmup_steps",
+    "generated_completion_tokens",
+    "prompt_tokens",
+    "total_forward_tokens",
+    "tok_s_denominator",
     "rollout_tokens",
     "rollout_seconds",
     "rollout_tok_s",
@@ -59,6 +69,10 @@ class BenchResult:
     model: str
     steps: int
     warmup_steps: int
+    generated_completion_tokens: int = 0
+    prompt_tokens: int = 0
+    total_forward_tokens: int = 0
+    tok_s_denominator: int = 0
     rollout_tokens: int = 0
     rollout_seconds: float = 0.0
     rollout_tok_s: float | None = None
@@ -85,7 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
     controller.add_argument(
         "--targets",
         default=",".join(DEFAULT_TARGETS),
-        help="Comma-separated targets. Built-ins: mlxrl, mlx-lm.",
+        help="Comma-separated targets. Built-ins: mlxrl, mlx-lm, mlx-lm-g4.",
     )
     controller.add_argument("--passes", type=int, default=2)
     controller.add_argument("--output", default="benchmarks/results/phase4_results.jsonl")
@@ -98,7 +112,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     worker = subparsers.add_parser("worker", help="Internal worker entrypoint.")
     add_common_args(worker)
-    worker.add_argument("--target", choices=["mlxrl", "mlx-lm"], required=True)
+    worker.add_argument("--target", choices=["mlxrl", "mlx-lm", "mlx-lm-g4"], required=True)
     worker.add_argument("--pass-index", type=int, required=True)
     worker.add_argument("--output", required=True)
     worker.set_defaults(func=run_worker)
@@ -115,6 +129,8 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-tokens", type=int, default=256)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top-p", type=float, default=0.95)
+    parser.add_argument("--top-k", type=int, default=0)
+    parser.add_argument("--min-p", type=float, default=0.0)
     parser.add_argument("--use-chat-template", action="store_true")
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--beta", type=float, default=0.04)
@@ -173,7 +189,7 @@ def validate_controller_args(args: argparse.Namespace, targets: Sequence[str]) -
 
 
 def run_one_target(args: argparse.Namespace, target: str, pass_index: int) -> BenchResult:
-    if target in {"mlxrl", "mlx-lm"}:
+    if target in {"mlxrl", "mlx-lm", "mlx-lm-g4"}:
         return run_internal_worker(args, target, pass_index)
     command = external_command(args, target)
     if command is None:
@@ -208,7 +224,8 @@ def run_internal_worker(args: argparse.Namespace, target: str, pass_index: int) 
         if completed.returncode != 0:
             note = (completed.stderr or completed.stdout).strip()[-500:]
             return missing_result(args, target, pass_index, note or "worker failed")
-        return result_from_json(output.read_text(encoding="utf-8"), target, pass_index)
+        result = result_from_json(output.read_text(encoding="utf-8"), target, pass_index)
+        return enforce_gradient_timing_sanity(result)
 
 
 def run_external_command(
@@ -236,7 +253,7 @@ def run_external_command(
             result = result_from_json(output.read_text(encoding="utf-8"), target, pass_index)
         else:
             result = result_from_json(completed.stdout, target, pass_index)
-        return validate_external_versions(result)
+        return enforce_gradient_timing_sanity(validate_external_versions(result))
 
 
 def common_worker_args(args: argparse.Namespace) -> list[str]:
@@ -259,6 +276,10 @@ def common_worker_args(args: argparse.Namespace) -> list[str]:
         str(args.temperature),
         "--top-p",
         str(args.top_p),
+        "--top-k",
+        str(args.top_k),
+        "--min-p",
+        str(args.min_p),
         *(
             ["--use-chat-template"]
             if getattr(args, "use_chat_template", False)
@@ -291,13 +312,15 @@ def bench_env(args: argparse.Namespace, output: Path) -> dict[str, str]:
     env["MLXRL_BENCH_GROUP_SIZE"] = str(args.group_size)
     env["MLXRL_BENCH_MAX_CONTEXT"] = str(args.max_context)
     env["MLXRL_BENCH_MAX_TOKENS"] = str(args.max_tokens)
+    env["MLXRL_BENCH_TOP_K"] = str(args.top_k)
+    env["MLXRL_BENCH_MIN_P"] = str(args.min_p)
     env["MLXRL_BENCH_WIRED_LIMIT_MB"] = str(args.wired_limit_mb)
     return env
 
 
 def external_command(args: argparse.Namespace, target: str) -> str | None:
     default_command = (
-        "python benchmarks/external_baseline_worker.py "
+        "{python} benchmarks/external_baseline_worker.py "
         "--target {target} "
         "--pass-index {pass_index} "
         "--output {output} "
@@ -310,6 +333,8 @@ def external_command(args: argparse.Namespace, target: str) -> str | None:
         "--max-tokens {max_tokens} "
         "--temperature {temperature} "
         "--top-p {top_p} "
+        "--top-k {top_k} "
+        "--min-p {min_p} "
         "--seed {seed} "
         "--beta {beta} "
         "--learning-rate {learning_rate} "
@@ -334,6 +359,7 @@ def expand_command(
 ) -> list[str]:
     values = {
         "target": target,
+        "python": sys.executable,
         "pass_index": pass_index,
         "output": str(output),
         "model": args.model,
@@ -345,6 +371,8 @@ def expand_command(
         "max_tokens": args.max_tokens,
         "temperature": args.temperature,
         "top_p": args.top_p,
+        "top_k": args.top_k,
+        "min_p": args.min_p,
         "seed": args.seed,
         "beta": args.beta,
         "learning_rate": args.learning_rate,
@@ -359,7 +387,7 @@ def expand_command(
 def run_worker(args: argparse.Namespace) -> int:
     if args.target == "mlxrl":
         result = run_mlxrl_worker(args)
-    elif args.target == "mlx-lm":
+    elif args.target in {"mlx-lm", "mlx-lm-g4"}:
         result = run_mlx_lm_worker(args)
     else:
         raise SystemExit(f"Unknown worker target {args.target!r}.")
@@ -390,12 +418,15 @@ def run_mlxrl_worker(args: argparse.Namespace) -> BenchResult:
         max_tokens=args.max_tokens,
         temperature=args.temperature,
         top_p=args.top_p,
+        min_p=args.min_p,
+        top_k=args.top_k,
     )
     algorithm = GRPOAlgorithm()
 
     rollout_seconds = 0.0
     gradient_seconds = 0.0
-    rollout_tokens = 0
+    generated_completion_tokens = 0
+    prompt_tokens = 0
     samples = 0
     measured_start = 0.0
     for step in range(args.steps):
@@ -429,7 +460,7 @@ def run_mlxrl_worker(args: argparse.Namespace) -> BenchResult:
             pad_token_id=pad_token_id,
             algorithm=algorithm,
         )
-        optimizer_step(
+        metrics = optimizer_step(
             model=model,
             optimizer=optimizer,
             batch=batch,
@@ -437,18 +468,21 @@ def run_mlxrl_worker(args: argparse.Namespace) -> BenchResult:
             pad_token_id=pad_token_id,
             algorithm=algorithm,
         )
+        del metrics
         mx.synchronize()  # Benchmark sync: finish optimizer step before phase timing.
         gradient_elapsed = time.perf_counter() - gradient_start
 
         if step >= args.warmup_steps:
             rollout_seconds += rollout_elapsed
             gradient_seconds += gradient_elapsed
-            rollout_tokens += sum(len(completion.completion_tokens) for completion in completions)
+            generated_completion_tokens += generated_tokens_from_rollouts(completions)
+            prompt_tokens += prompt_tokens_from_rollouts(completions)
             samples += len(completions)
 
     mx.synchronize()  # Benchmark sync: finish measured run before memory read.
     measured_seconds = time.perf_counter() - measured_start
     measured_steps = args.steps - args.warmup_steps
+    tok_s_denominator = generated_completion_tokens
     return BenchResult(
         target="mlxrl",
         pass_index=args.pass_index,
@@ -456,9 +490,13 @@ def run_mlxrl_worker(args: argparse.Namespace) -> BenchResult:
         model=args.model,
         steps=measured_steps,
         warmup_steps=args.warmup_steps,
-        rollout_tokens=rollout_tokens,
+        generated_completion_tokens=generated_completion_tokens,
+        prompt_tokens=prompt_tokens,
+        total_forward_tokens=prompt_tokens + generated_completion_tokens,
+        tok_s_denominator=tok_s_denominator,
+        rollout_tokens=generated_completion_tokens,
         rollout_seconds=rollout_seconds,
-        rollout_tok_s=safe_div(rollout_tokens, rollout_seconds),
+        rollout_tok_s=safe_div(tok_s_denominator, rollout_seconds),
         gradient_steps=measured_steps,
         gradient_seconds=gradient_seconds,
         gradient_step_s=safe_div(gradient_seconds, measured_steps),
@@ -481,10 +519,19 @@ def run_mlx_lm_worker(args: argparse.Namespace) -> BenchResult:
     from mlxrl.cli import _gsm8k_prompt
 
     set_mlx_wired_limit(mx, args.wired_limit_mb)
+    mx.random.seed(args.seed)
     model, tokenizer = mlx_lm.load(args.model)
-    sampler = make_sampler(temp=args.temperature, top_p=args.top_p)
+    sampler = make_sampler(
+        temp=args.temperature,
+        top_p=args.top_p,
+        min_p=args.min_p,
+        top_k=args.top_k,
+    )
+    completions_per_prompt = args.group_size if args.target == "mlx-lm-g4" else 1
     rollout_seconds = 0.0
-    rollout_tokens = 0
+    generated_completion_tokens = 0
+    prompt_tokens = 0
+    samples = 0
     measured_start = 0.0
     for step in range(args.steps):
         if step == args.warmup_steps:
@@ -492,48 +539,89 @@ def run_mlx_lm_worker(args: argparse.Namespace) -> BenchResult:
             mx.reset_peak_memory()
             measured_start = time.perf_counter()
         prompt, _ = _gsm8k_prompt(args, step)
+        prompt_token_count = encoded_prompt_token_count(tokenizer, prompt)
         start = time.perf_counter()
-        token_count = 0
-        for response in mlx_lm.stream_generate(
-            model,
-            tokenizer,
-            prompt,
-            max_tokens=args.max_tokens,
-            sampler=sampler,
-        ):
-            token_count = max(token_count, int(response.generation_tokens))
+        step_tokens = 0
+        for _ in range(completions_per_prompt):
+            token_count = 0
+            for response in mlx_lm.stream_generate(
+                model,
+                tokenizer,
+                prompt,
+                max_tokens=args.max_tokens,
+                sampler=sampler,
+            ):
+                token_count = max(token_count, int(response.generation_tokens))
+            step_tokens += token_count
         mx.synchronize()  # Benchmark sync: finish mlx-lm generation before timing.
         if step >= args.warmup_steps:
             rollout_seconds += time.perf_counter() - start
-            rollout_tokens += token_count
+            generated_completion_tokens += step_tokens
+            prompt_tokens += prompt_token_count * completions_per_prompt
+            samples += completions_per_prompt
 
     mx.synchronize()  # Benchmark sync: finish measured generation before memory read.
     measured_seconds = time.perf_counter() - measured_start
     measured_steps = args.steps - args.warmup_steps
+    tok_s_denominator = generated_completion_tokens
     return BenchResult(
-        target="mlx-lm",
+        target=args.target,
         pass_index=args.pass_index,
         status="ok",
         model=args.model,
         steps=measured_steps,
         warmup_steps=args.warmup_steps,
-        rollout_tokens=rollout_tokens,
+        generated_completion_tokens=generated_completion_tokens,
+        prompt_tokens=prompt_tokens,
+        total_forward_tokens=prompt_tokens + generated_completion_tokens,
+        tok_s_denominator=tok_s_denominator,
+        rollout_tokens=generated_completion_tokens,
         rollout_seconds=rollout_seconds,
-        rollout_tok_s=safe_div(rollout_tokens, rollout_seconds),
-        samples=measured_steps,
+        rollout_tok_s=safe_div(tok_s_denominator, rollout_seconds),
+        samples=samples,
         end_to_end_seconds=measured_seconds,
-        samples_s=safe_div(measured_steps, measured_seconds),
+        samples_s=safe_div(samples, measured_seconds),
         peak_memory_gb=mx.get_peak_memory() / 1e9,
         mlx_version=dist_version("mlx"),
         mlx_lm_version=dist_version("mlx-lm"),
         tool_version=dist_version("mlx-lm"),
-        note="generation-only baseline; gradient fields are not applicable",
+        note=(
+            "generation-only baseline; "
+            f"sequential G={completions_per_prompt}; gradient fields are not applicable"
+        ),
     )
 
 
 def set_mlx_wired_limit(mx: Any, wired_limit_mb: int) -> None:
     if wired_limit_mb > 0:
         mx.set_wired_limit(wired_limit_mb * 1024 * 1024)
+
+
+def generated_tokens_from_rollouts(completions: Sequence[Any]) -> int:
+    return sum(len(completion.completion_tokens) for completion in completions)
+
+
+def prompt_tokens_from_rollouts(completions: Sequence[Any]) -> int:
+    by_prompt: dict[int, int] = {}
+    for completion in completions:
+        by_prompt.setdefault(int(completion.prompt_index), len(completion.prompt_tokens))
+    return sum(by_prompt.values())
+
+
+def encoded_prompt_token_count(
+    tokenizer: Any,
+    prompt: str,
+    *,
+    use_chat_template: bool = False,
+) -> int:
+    text = prompt
+    if use_chat_template and getattr(tokenizer, "chat_template", None) is not None:
+        text = tokenizer.apply_chat_template(
+            [{"role": "user", "content": prompt}],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+    return len(tokenizer.encode(text))
 
 
 def read_iogpu_wired_limit_mb() -> int | None:
@@ -557,6 +645,22 @@ def result_from_json(raw: str, target: str, pass_index: int) -> BenchResult:
     filtered.setdefault("target", target)
     filtered.setdefault("pass_index", pass_index)
     filtered.setdefault("status", "ok")
+    generated = int(
+        filtered.get("generated_completion_tokens")
+        or filtered.get("rollout_tokens")
+        or 0
+    )
+    prompt_tokens = int(filtered.get("prompt_tokens") or 0)
+    filtered.setdefault("generated_completion_tokens", generated)
+    filtered.setdefault("prompt_tokens", prompt_tokens)
+    filtered.setdefault("total_forward_tokens", prompt_tokens + generated)
+    filtered.setdefault("tok_s_denominator", generated)
+    filtered.setdefault("rollout_tokens", generated)
+    if filtered.get("rollout_tok_s") is None:
+        filtered["rollout_tok_s"] = safe_div(
+            float(filtered["tok_s_denominator"]),
+            float(filtered.get("rollout_seconds") or 0.0),
+        )
     return BenchResult(**filtered)
 
 
@@ -612,6 +716,29 @@ def validate_external_versions(result: BenchResult) -> BenchResult:
     return replace(result, status="missing", note=note)
 
 
+def enforce_gradient_timing_sanity(result: BenchResult) -> BenchResult:
+    if (
+        result.gradient_steps <= 0
+        or result.gradient_step_s is None
+        or result.gradient_step_s >= MIN_SYNCED_GRADIENT_STEP_SECONDS
+    ):
+        return result
+    note = "; ".join(
+        [
+            result.note,
+            "rejected synced grad_s_step "
+            f"{result.gradient_step_s:.6f}s < {MIN_SYNCED_GRADIENT_STEP_SECONDS:.3f}s",
+        ]
+    ).strip("; ")
+    return replace(
+        result,
+        status="missing",
+        gradient_seconds=0.0,
+        gradient_step_s=None,
+        note=note,
+    )
+
+
 def version_at_least(observed: str, minimum: str) -> bool:
     return version_tuple(observed) >= version_tuple(minimum)
 
@@ -630,8 +757,12 @@ def render_summary(results: Sequence[BenchResult]) -> str:
     headers = [
         "target",
         "pass",
+        "comparison",
         "status",
         "rollout tok/s",
+        "gen toks",
+        "prompt toks",
+        "tok/s denom",
         "grad s/step",
         "samples/s",
         "it/s",
@@ -642,8 +773,12 @@ def render_summary(results: Sequence[BenchResult]) -> str:
         [
             result.target,
             str(result.pass_index + 1),
+            comparison_label(result.target),
             result.status,
             fmt(result.rollout_tok_s),
+            str(result.generated_completion_tokens),
+            str(result.prompt_tokens),
+            str(result.tok_s_denominator),
             fmt(result.gradient_step_s),
             fmt(result.samples_s),
             fmt(result.it_s),
@@ -655,6 +790,18 @@ def render_summary(results: Sequence[BenchResult]) -> str:
     lines = [
         "# Phase 4 Benchmark Summary",
         "",
+        "Rollout tok/s definition: generated completion tokens only, excluding "
+        "prompt/prefix tokens and warmup steps, divided by synchronized generation "
+        "phase wall-clock seconds.",
+        "",
+        "Sync guarantee: every timed rollout, optimizer, and full-run boundary calls "
+        "`mx.eval` or `mx.synchronize` on the relevant MLX outputs/state before "
+        "stopping the timer. Synced gradient steps under 10 ms are rejected.",
+        "",
+        "Comparison labels: `apples-to-apples` is reserved for mlxrl's own GRPO "
+        "semantics/config; `package-speed only` means the package fast path is useful "
+        "but training or sampling semantics differ; `gen-only` has no gradient phase.",
+        "",
         "| " + " | ".join(headers) + " |",
         "| " + " | ".join("---" for _ in headers) + " |",
     ]
@@ -662,6 +809,16 @@ def render_summary(results: Sequence[BenchResult]) -> str:
     lines.append("")
     lines.extend(reproducibility_lines(results))
     return "\n".join(lines)
+
+
+def comparison_label(target: str) -> str:
+    if target == "mlxrl":
+        return "apples-to-apples"
+    if target in {"mlx-tune", "mlx-lm-lora"}:
+        return "package-speed only"
+    if target in {"mlx-lm", "mlx-lm-g4"}:
+        return "gen-only"
+    return "unknown"
 
 
 def reproducibility_lines(results: Sequence[BenchResult]) -> list[str]:
@@ -684,6 +841,9 @@ def format_result_line(result: BenchResult) -> str:
     return (
         f"{result.target}[pass={result.pass_index + 1}] {result.status} "
         f"rollout_tok_s={fmt(result.rollout_tok_s)} "
+        f"tok_s_denom={result.tok_s_denominator} "
+        f"gen_tokens={result.generated_completion_tokens} "
+        f"prompt_tokens={result.prompt_tokens} "
         f"grad_s_step={fmt(result.gradient_step_s)} "
         f"samples_s={fmt(result.samples_s)} "
         f"it_s={fmt(result.it_s)} peak_gb={fmt(result.peak_memory_gb)}"

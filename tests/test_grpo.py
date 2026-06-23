@@ -66,6 +66,53 @@ def test_grpo_loss_matches_hand_computed_tiny_vocab_example() -> None:
     assert abs(float(metrics.loss.item()) - expected_loss) < 1e-6
 
 
+def test_prompt_positions_are_zero_contribution_to_loss_and_grad() -> None:
+    policy = mx.log(mx.array([[0.90, 0.10, 0.30, 0.70]], dtype=mx.float32))
+    old_policy = mx.log(mx.array([[0.80, 0.20, 0.25, 0.50]], dtype=mx.float32))
+    reference = mx.log(mx.array([[0.05, 0.95, 0.40, 0.60]], dtype=mx.float32))
+    advantages = mx.array([1.25], dtype=mx.float32)
+    completion_mask = mx.array([[0.0, 0.0, 1.0, 1.0]], dtype=mx.float32)
+    beta = 0.3
+
+    masked = grpo_loss(
+        policy_logprobs=policy,
+        old_policy_logprobs=old_policy,
+        reference_logprobs=reference,
+        advantages=advantages,
+        mask=completion_mask,
+        beta=beta,
+    )
+    completion_only = grpo_loss(
+        policy_logprobs=policy[:, 2:],
+        old_policy_logprobs=old_policy[:, 2:],
+        reference_logprobs=reference[:, 2:],
+        advantages=advantages,
+        mask=mx.ones((1, 2), dtype=mx.float32),
+        beta=beta,
+    )
+
+    def loss_fn(policy_logprobs: mx.array) -> mx.array:
+        return grpo_loss(
+            policy_logprobs=policy_logprobs,
+            old_policy_logprobs=old_policy,
+            reference_logprobs=reference,
+            advantages=advantages,
+            mask=completion_mask,
+            beta=beta,
+        ).loss
+
+    policy_grad = mx.grad(loss_fn)(policy)
+    mx.eval(  # Test sync: materialize masked loss and gradient for exact assertions.
+        masked.loss,
+        completion_only.loss,
+        policy_grad,
+    )
+
+    assert float(masked.loss.item()) == float(completion_only.loss.item())
+    assert policy_grad[:, :2].tolist() == [[0.0, 0.0]]
+    assert any(abs(value) > 0.0 for value in policy_grad[:, 2:].tolist()[0])
+
+
 def test_phase3_variants_reduce_to_base_grpo_under_configs() -> None:
     policy = mx.log(mx.array([[0.20, 0.50], [0.40, 0.25]], dtype=mx.float32))
     old_policy = mx.log(mx.array([[0.18, 0.52], [0.43, 0.20]], dtype=mx.float32))
