@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import mlx.core as mx
 import mlx.nn as nn
 from mlx.utils import tree_map
 from mlx_lm.models.cache import make_prompt_cache
-from mlx_lm.sample_utils import make_sampler
+from mlx_lm.sample_utils import apply_min_p, apply_top_k, apply_top_p, make_sampler
 
 from mlxrl.rollout.naive import (
     Completion,
@@ -127,6 +127,7 @@ def clone_prompt_cache(prompt_cache: Sequence[Any]) -> list[Any]:
 def fixed_decode_cache_from_prefix(
     prompt_cache: Sequence[Any],
     max_tokens: int,
+    batch_size: int = 1,
 ) -> list[FixedKVCache]:
     """Clone a prompt cache into fixed-size buffers for compiled decode."""
 
@@ -135,24 +136,92 @@ def fixed_decode_cache_from_prefix(
         keys, values = cache.state
         prefix_length = keys.shape[2]
         max_length = prefix_length + max_tokens
+        if keys.shape[0] != 1 and keys.shape[0] != batch_size:
+            raise ValueError("Prefix cache batch size cannot be broadcast.")
         fixed_keys = mx.zeros(
-            (keys.shape[0], keys.shape[1], max_length, keys.shape[3]),
+            (batch_size, keys.shape[1], max_length, keys.shape[3]),
             dtype=keys.dtype,
         )
         fixed_values = mx.zeros(
-            (values.shape[0], values.shape[1], max_length, values.shape[3]),
+            (batch_size, values.shape[1], max_length, values.shape[3]),
             dtype=values.dtype,
         )
-        fixed_keys[:, :, :prefix_length, :] = keys
-        fixed_values[:, :, :prefix_length, :] = values
+        fixed_keys[:, :, :prefix_length, :] = mx.broadcast_to(
+            keys,
+            (batch_size, keys.shape[1], prefix_length, keys.shape[3]),
+        )
+        fixed_values[:, :, :prefix_length, :] = mx.broadcast_to(
+            values,
+            (batch_size, values.shape[1], prefix_length, values.shape[3]),
+        )
         fixed.append(
             FixedKVCache(
                 keys=fixed_keys,
                 values=fixed_values,
-                offset=mx.array([prefix_length], dtype=mx.int32),
+                offset=mx.array([prefix_length] * batch_size, dtype=mx.int32),
             )
         )
     mx.eval(  # Compile sync: materialize fixed KV buffers before state capture.
+        [cache.state for cache in fixed],
+    )
+    return fixed
+
+
+def fixed_decode_cache_from_prefixes(
+    prefixes: Sequence[PrefixCache],
+    group_size: int,
+    max_tokens: int,
+) -> list[FixedKVCache]:
+    """Build fixed decode buffers for all prompt groups in one batch."""
+
+    if not prefixes:
+        raise ValueError("At least one prefix cache is required.")
+    if group_size < 1:
+        raise ValueError("group_size must be at least 1.")
+
+    batch_size = len(prefixes) * group_size
+    layer_count = len(prefixes[0].cache)
+    fixed: list[FixedKVCache] = []
+    for layer_index in range(layer_count):
+        layer_states = [prefix.cache[layer_index].state for prefix in prefixes]
+        first_keys, first_values = layer_states[0]
+        max_prefix_length = max(keys.shape[2] for keys, _ in layer_states)
+        max_length = max_prefix_length + max_tokens
+        fixed_keys = mx.zeros(
+            (batch_size, first_keys.shape[1], max_length, first_keys.shape[3]),
+            dtype=first_keys.dtype,
+        )
+        fixed_values = mx.zeros(
+            (
+                batch_size,
+                first_values.shape[1],
+                max_length,
+                first_values.shape[3],
+            ),
+            dtype=first_values.dtype,
+        )
+        offsets: list[int] = []
+        for prompt_index, (keys, values) in enumerate(layer_states):
+            prefix_length = keys.shape[2]
+            start = prompt_index * group_size
+            stop = start + group_size
+            fixed_keys[start:stop, :, :prefix_length, :] = mx.broadcast_to(
+                keys,
+                (group_size, keys.shape[1], prefix_length, keys.shape[3]),
+            )
+            fixed_values[start:stop, :, :prefix_length, :] = mx.broadcast_to(
+                values,
+                (group_size, values.shape[1], prefix_length, values.shape[3]),
+            )
+            offsets.extend([prefix_length] * group_size)
+        fixed.append(
+            FixedKVCache(
+                keys=fixed_keys,
+                values=fixed_values,
+                offset=mx.array(offsets, dtype=mx.int32),
+            )
+        )
+    mx.eval(  # Compile sync: materialize prompt-set KV buffers before state capture.
         [cache.state for cache in fixed],
     )
     return fixed
@@ -220,9 +289,142 @@ def generate_from_prefix_cache(
     return tuple(completion), decode_completion(tokenizer, completion)
 
 
+def generate_group_from_prefix_cache(
+    model: nn.Module,
+    tokenizer: Any,
+    prefix: PrefixCache,
+    group_size: int,
+    config: SamplingConfig,
+    eos_token_ids: frozenset[int],
+    compile_decode_step: bool = False,
+) -> tuple[tuple[tuple[int, ...], str], ...]:
+    """Decode a whole prompt group in one batched KV cache when safe."""
+
+    return generate_prompt_set_from_prefix_caches(
+        model=model,
+        tokenizer=tokenizer,
+        prefixes=[prefix],
+        group_size=group_size,
+        config=config,
+        eos_token_ids=eos_token_ids,
+        compile_decode_step=compile_decode_step,
+    )
+
+
+def generate_prompt_set_from_prefix_caches(
+    model: nn.Module,
+    tokenizer: Any,
+    prefixes: Sequence[PrefixCache],
+    group_size: int,
+    config: SamplingConfig,
+    eos_token_ids: frozenset[int],
+    compile_decode_step: bool = False,
+) -> tuple[tuple[tuple[int, ...], str], ...]:
+    """Decode all prompt groups together with completion-major RNG keys."""
+
+    if config.max_tokens < 1:
+        raise ValueError("max_tokens must be at least 1.")
+    if group_size < 1:
+        raise ValueError("group_size must be at least 1.")
+    if not prefixes:
+        raise ValueError("At least one prefix cache is required.")
+
+    row_count = len(prefixes) * group_size
+    start_random_state = _current_random_state()
+    draw_keys: list[list[mx.array]] | None = None
+    final_random_state: mx.array | None = None
+    if _uses_random_sampling(config):
+        draw_keys, final_random_state = _completion_major_draw_keys(
+            start_random_state,
+            group_size=row_count,
+            max_tokens=config.max_tokens,
+        )
+
+    cache: list[Any] = fixed_decode_cache_from_prefixes(
+        prefixes,
+        group_size=group_size,
+        max_tokens=config.max_tokens,
+    )
+    decode_logprobs = (
+        _compiled_decode_logprobs(model, cache)
+        if compile_decode_step
+        else _decode_logprobs(model, cache)
+    )
+    first_logprobs = mx.concatenate(
+        [
+            mx.broadcast_to(
+                prefix.first_logprobs,
+                (group_size, prefix.first_logprobs.shape[-1]),
+            )
+            for prefix in prefixes
+        ],
+        axis=0,
+    )
+
+    rows: list[list[int]] = [[] for _ in range(row_count)]
+    active = [True] * row_count
+    early_eos = False
+    next_token = _sample_batched_logprobs(
+        first_logprobs,
+        config,
+        None if draw_keys is None else [row[0] for row in draw_keys],
+    )
+    mx.eval(next_token)  # Rollout sync: Python needs sampled tokens to append/EOS-check.
+    current = next_token
+    for row_index, token_id in enumerate(_token_ids(next_token)):
+        rows[row_index].append(token_id)
+        if token_id in eos_token_ids:
+            active[row_index] = False
+            early_eos = config.max_tokens > 1
+
+    for step in range(1, config.max_tokens):
+        logprobs = decode_logprobs(current)
+        next_token = _sample_batched_logprobs(
+            logprobs,
+            config,
+            None if draw_keys is None else [row[step] for row in draw_keys],
+        )
+        mx.eval(next_token)  # Rollout sync: Python needs sampled tokens to append/EOS-check.
+        for row_index, token_id in enumerate(_token_ids(next_token)):
+            if not active[row_index]:
+                continue
+            rows[row_index].append(token_id)
+            if token_id in eos_token_ids:
+                active[row_index] = False
+                early_eos = step < config.max_tokens - 1
+        current = next_token
+        if not any(active):
+            break
+
+    if early_eos:
+        _set_random_state(start_random_state)
+        outputs: list[tuple[tuple[int, ...], str]] = []
+        for prefix in prefixes:
+            outputs.extend(
+                generate_from_prefix_cache(
+                    model=model,
+                    tokenizer=tokenizer,
+                    prefix=prefix,
+                    config=config,
+                    eos_token_ids=eos_token_ids,
+                    compile_decode_step=compile_decode_step,
+                )
+                for _ in range(group_size)
+            )
+        return tuple(outputs)
+
+    if final_random_state is not None:
+        _set_random_state(final_random_state)
+
+    return tuple(
+        (tuple(row), decode_completion(tokenizer, row))
+        for row in rows
+    )
+
+
 def _decode_logprobs(model: nn.Module, cache: list[Any]) -> Any:
     def decode(token: mx.array) -> mx.array:
-        logits = model(token[None], cache=cache)[:, -1, :]
+        logits = model(token[:, None], cache=cache)[:, -1, :]
         return logits - mx.logsumexp(logits, axis=-1, keepdims=True)
 
     return decode
@@ -232,10 +434,74 @@ def _compiled_decode_logprobs(model: nn.Module, cache: list[Any]) -> Any:
     cache_state = [layer_cache.state for layer_cache in cache]
 
     def decode(token: mx.array) -> mx.array:
-        logits = model(token[None], cache=cache)[:, -1, :]
+        logits = model(token[:, None], cache=cache)[:, -1, :]
         return logits - mx.logsumexp(logits, axis=-1, keepdims=True)
 
     return mx.compile(decode, inputs=[model.state, cache_state], outputs=cache_state)
+
+
+def _uses_random_sampling(config: SamplingConfig) -> bool:
+    return config.temperature != 0
+
+
+def _current_random_state() -> mx.array:
+    return mx.array(cast(list[mx.array], mx.random.state)[0])
+
+
+def _set_random_state(state: mx.array) -> None:
+    cast(list[mx.array], mx.random.state)[0] = state
+
+
+def _token_ids(tokens: mx.array) -> list[int]:
+    values = cast(Sequence[Any], tokens.tolist())
+    return [int(token) for token in values]
+
+
+def _completion_major_draw_keys(
+    start_state: mx.array,
+    group_size: int,
+    max_tokens: int,
+) -> tuple[list[list[mx.array]], mx.array]:
+    state = start_state
+    keys: list[list[mx.array]] = []
+    for _ in range(group_size):
+        row: list[mx.array] = []
+        for _ in range(max_tokens):
+            split = mx.random.split(state, 2)
+            state = split[0]
+            row.append(split[1])
+        keys.append(row)
+    return keys, state
+
+
+def _filtered_logprobs(logprobs: mx.array, config: SamplingConfig) -> mx.array:
+    if 0 < config.top_p < 1.0:
+        logprobs = apply_top_p(logprobs, config.top_p)
+    if config.min_p != 0.0:
+        logprobs = apply_min_p(logprobs, config.min_p, 1)
+    if config.top_k > 0:
+        logprobs = apply_top_k(logprobs, config.top_k)
+    return logprobs
+
+
+def _sample_batched_logprobs(
+    logprobs: mx.array,
+    config: SamplingConfig,
+    keys: Sequence[mx.array] | None,
+) -> mx.array:
+    filtered = _filtered_logprobs(logprobs, config)
+    if not _uses_random_sampling(config):
+        return mx.argmax(filtered, axis=-1)
+    if keys is None:
+        return mx.random.categorical(filtered * (1 / config.temperature))
+    samples = [
+        mx.random.categorical(
+            filtered[index : index + 1] * (1 / config.temperature),
+            key=key,
+        )
+        for index, key in enumerate(keys)
+    ]
+    return mx.concatenate(samples, axis=0)
 
 
 def generate_prefix_cached_group_rollouts(
@@ -247,6 +513,7 @@ def generate_prefix_cached_group_rollouts(
     seed: int | None = None,
     use_chat_template: bool = True,
     compile_decode_step: bool = False,
+    batch_groups: bool = False,
 ) -> tuple[Completion, ...]:
     """Generate G completions per prompt after a single prompt prefill."""
 
@@ -257,15 +524,46 @@ def generate_prefix_cached_group_rollouts(
 
     eos_ids = eos_token_ids_from_tokenizer(tokenizer)
     completions: list[Completion] = []
-    for prompt_index, prompt in enumerate(prompts):
+    prompt_tokens_by_index: list[tuple[int, ...]] = []
+    prefixes: list[PrefixCache] = []
+    for prompt in prompts:
         prompt_tokens = encode_chat_prompt(
             tokenizer,
             prompt,
             use_chat_template=use_chat_template,
         )
-        prefix = prefill_prompt_once(model, prompt_tokens)
-        for group_index in range(group_size):
-            completion_tokens, text = generate_from_prefix_cache(
+        prompt_tokens_by_index.append(prompt_tokens)
+        prefixes.append(prefill_prompt_once(model, prompt_tokens))
+
+    if batch_groups:
+        batched_outputs = generate_prompt_set_from_prefix_caches(
+            model=model,
+            tokenizer=tokenizer,
+            prefixes=prefixes,
+            group_size=group_size,
+            config=config,
+            eos_token_ids=eos_ids,
+            compile_decode_step=compile_decode_step,
+        )
+        for row_index, (completion_tokens, text) in enumerate(batched_outputs):
+            prompt_index = row_index // group_size
+            group_index = row_index % group_size
+            completions.append(
+                Completion(
+                    prompt_index=prompt_index,
+                    group_index=group_index,
+                    prompt_tokens=prompt_tokens_by_index[prompt_index],
+                    completion_tokens=completion_tokens,
+                    text=text,
+                )
+            )
+        return tuple(completions)
+
+    for prompt_index, (prompt_tokens, prefix) in enumerate(
+        zip(prompt_tokens_by_index, prefixes, strict=True)
+    ):
+        group_outputs = tuple(
+            generate_from_prefix_cache(
                 model=model,
                 tokenizer=tokenizer,
                 prefix=prefix,
@@ -273,6 +571,9 @@ def generate_prefix_cached_group_rollouts(
                 eos_token_ids=eos_ids,
                 compile_decode_step=compile_decode_step,
             )
+            for _ in range(group_size)
+        )
+        for group_index, (completion_tokens, text) in enumerate(group_outputs):
             completions.append(
                 Completion(
                     prompt_index=prompt_index,

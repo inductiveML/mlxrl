@@ -123,12 +123,13 @@ def _sampling_config(args: argparse.Namespace) -> SamplingConfig:
 
 def _completion_rewards(
     completions: Sequence[Any],
-    answer: str,
+    answers: Sequence[str],
 ) -> tuple[list[float], float, float]:
     rewards: list[float] = []
     accuracies: list[float] = []
     formats: list[float] = []
     for completion in completions:
+        answer = answers[int(completion.prompt_index)]
         total, accuracy, fmt = _completion_reward(completion.text, answer)
         rewards.append(total)
         accuracies.append(accuracy)
@@ -310,11 +311,16 @@ def _phase2_equivalence(args: argparse.Namespace) -> int:
     )
     pad_token_id = pad_token_id_from_tokenizer(tokenizer)
     sampling = _sampling_config(args)
-    prompt, answer = _gsm8k_prompt(args, args.prompt_index)
+    prompt_answers = [
+        _gsm8k_prompt(args, args.prompt_index + index)
+        for index in range(args.num_prompts)
+    ]
+    prompts = [prompt for prompt, _ in prompt_answers]
+    answers = [answer for _, answer in prompt_answers]
     rollout_kwargs = {
         "model": model,
         "tokenizer": tokenizer,
-        "prompts": [prompt],
+        "prompts": prompts,
         "group_size": args.group_size,
         "config": sampling,
         "seed": args.seed,
@@ -323,6 +329,7 @@ def _phase2_equivalence(args: argparse.Namespace) -> int:
     phase2_rollout_kwargs = {
         **rollout_kwargs,
         "compile_decode_step": args.compile_decode_step,
+        "batch_groups": args.batch_groups,
     }
 
     phase1_completions, phase1_elapsed, phase1_peak = _rollout_timed(
@@ -332,7 +339,7 @@ def _phase2_equivalence(args: argparse.Namespace) -> int:
     )
     phase2_completions, phase2_elapsed, phase2_peak = _rollout_timed(
         generate_prefix_cached_group_rollouts,
-        "phase2_compiled" if args.compile_decode_step else "phase2_prefix",
+        _phase2_label(args.compile_decode_step, args.batch_groups),
         **phase2_rollout_kwargs,
     )
 
@@ -342,11 +349,11 @@ def _phase2_equivalence(args: argparse.Namespace) -> int:
 
     phase1_rewards, phase1_accuracy, phase1_format = _completion_rewards(
         phase1_completions,
-        answer,
+        answers,
     )
     phase2_rewards, phase2_accuracy, phase2_format = _completion_rewards(
         phase2_completions,
-        answer,
+        answers,
     )
     phase1_batch, phase1_loss = _build_equivalence_batch(
         model=model,
@@ -467,6 +474,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     phase2.add_argument("--model", default=DEFAULT_MODEL_ID)
     phase2.add_argument("--prompt-index", type=int, default=0)
+    phase2.add_argument("--num-prompts", type=int, default=1)
     phase2.add_argument("--group-size", type=int, default=4)
     phase2.add_argument("--max-tokens", type=int, default=32)
     phase2.add_argument("--temperature", type=float, default=0.7)
@@ -481,10 +489,21 @@ def build_parser() -> argparse.ArgumentParser:
     phase2.add_argument("--use-chat-template", action="store_true")
     phase2.add_argument("--checkpoint-completion-forward", action="store_true")
     phase2.add_argument("--compile-decode-step", action="store_true")
+    phase2.add_argument("--batch-groups", action="store_true")
     phase2.add_argument("--tolerance", type=float, default=1e-4)
     phase2.add_argument("--output", default="reference_outputs/phase2_prefix_reference.npz")
     phase2.set_defaults(func=_phase2_equivalence)
     return parser
+
+
+def _phase2_label(compile_decode_step: bool, batch_groups: bool) -> str:
+    if compile_decode_step and batch_groups:
+        return "phase2_batched_compiled"
+    if batch_groups:
+        return "phase2_batched"
+    if compile_decode_step:
+        return "phase2_compiled"
+    return "phase2_prefix"
 
 
 def main(argv: list[str] | None = None) -> int:
