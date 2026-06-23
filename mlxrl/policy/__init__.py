@@ -16,6 +16,7 @@ from mlxrl.policy.model import (
     Phase0Report,
     assert_lora_on_every_layer,
     assert_only_lora_trainable,
+    enable_grad_checkpointing,
     load_policy_with_lora,
     strict_lora_config,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "assert_only_lora_trainable",
     "completion_logprobs",
     "dual_logprobs",
+    "enable_grad_checkpointing",
     "load_policy_with_lora",
     "pad_token_id_from_tokenizer",
     "prefix_cached_completion_logprobs",

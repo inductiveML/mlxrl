@@ -13,6 +13,7 @@ from mlxrl.policy.model import (
     assert_lora_on_every_layer,
     assert_only_lora_trainable,
     count_parameters,
+    enable_grad_checkpointing,
     inject_lora_adapters,
     lora_module_counts_by_layer,
     strict_lora_config,
@@ -64,6 +65,15 @@ class ToyModel(nn.Module):
     def __init__(self, layers: list[nn.Module]) -> None:
         super().__init__()
         self.layers = layers
+
+
+class ToyCheckpointLayer(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.linear = nn.Linear(4, 4, bias=False)
+
+    def __call__(self, x: mx.array) -> mx.array:
+        return self.linear(x)
 
 
 def test_assert_only_lora_trainable_accepts_adapter_leaves() -> None:
@@ -152,3 +162,17 @@ def test_inject_lora_adapters_explicit_mode_stays_strict_on_hybrid_layers() -> N
             model,
             LoRAConfig(rank=2, target_suffixes=DEFAULT_LORA_TARGET_SUFFIXES),
         )
+
+
+def test_enable_grad_checkpointing_patches_layer_class_once() -> None:
+    model = ToyModel([ToyCheckpointLayer(), ToyCheckpointLayer()])
+    layer_type = type(model.layers[0])
+    original_call = layer_type.__call__
+
+    assert enable_grad_checkpointing(model) is True
+    patched_call = layer_type.__call__
+
+    assert patched_call is not original_call
+    assert cast(Any, layer_type)._mlxrl_grad_checkpoint_enabled is True
+    assert enable_grad_checkpointing(model) is False
+    assert layer_type.__call__ is patched_call

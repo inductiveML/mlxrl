@@ -211,6 +211,7 @@ def dual_logprobs(
     completion_token_ids: Sequence[Sequence[int]],
     pad_token_id: int = 0,
     use_checkpoint: bool = False,
+    compute_reference: bool = True,
 ) -> DualLogprobs:
     """Compute policy logprobs and reference logprobs using one model object."""
 
@@ -221,6 +222,12 @@ def dual_logprobs(
         pad_token_id,
         use_checkpoint=use_checkpoint,
     )
+    if not compute_reference:
+        return DualLogprobs(
+            policy=policy.logprobs,
+            reference=mx.stop_gradient(policy.logprobs),
+            mask=policy.mask,
+        )
     with adapters_disabled(model):
         reference = prefix_cached_completion_logprobs(
             model,
@@ -266,16 +273,14 @@ def _completion_forward(
     input_ids: mx.array,
     use_checkpoint: bool,
 ) -> mx.array:
-    """Forward completion tokens, optionally checkpointing adapter gradients."""
+    """Forward completion tokens through the model.
 
-    if not use_checkpoint:
-        return model(input_ids)
+    Gradient checkpointing is applied per transformer layer at model setup.
+    The flag is retained for API compatibility with older call sites.
+    """
 
-    def inner(params: dict[str, Any], tokens: mx.array) -> mx.array:
-        model.update(params)
-        return model(tokens)
-
-    return mx.checkpoint(inner)(model.trainable_parameters(), input_ids)
+    del use_checkpoint
+    return model(input_ids)
 
 
 def pad_token_id_from_tokenizer(tokenizer: Any) -> int:

@@ -181,3 +181,37 @@ def test_approximate_kl_is_zero_when_policies_match() -> None:
     mx.eval(kl)  # Test sync: materialize values before Python list assertion.
 
     assert kl.tolist() == [[0.0, 0.0]]
+
+
+def test_beta_zero_loss_and_grad_ignore_reference_logprobs() -> None:
+    policy = mx.log(mx.array([[0.20, 0.50], [0.40, 0.25]], dtype=mx.float32))
+    old_policy = mx.log(mx.array([[0.18, 0.52], [0.43, 0.20]], dtype=mx.float32))
+    reference_a = mx.log(mx.array([[0.25, 0.40], [0.50, 0.20]], dtype=mx.float32))
+    reference_b = mx.zeros_like(reference_a)
+    advantages = mx.array([-1.0, 1.0], dtype=mx.float32)
+    mask = mx.ones_like(policy)
+
+    def loss_with_reference(reference: mx.array):
+        def loss_fn(policy_logprobs: mx.array) -> mx.array:
+            return grpo_loss(
+                policy_logprobs=policy_logprobs,
+                old_policy_logprobs=old_policy,
+                reference_logprobs=reference,
+                advantages=advantages,
+                mask=mask,
+                beta=0.0,
+            ).loss
+
+        return loss_fn(policy), mx.grad(loss_fn)(policy)
+
+    loss_a, grad_a = loss_with_reference(reference_a)
+    loss_b, grad_b = loss_with_reference(reference_b)
+    loss_error = mx.abs(loss_a - loss_b)
+    grad_error = mx.max(mx.abs(grad_a - grad_b))
+    mx.eval(  # Test sync: materialize beta-zero loss/grad comparison.
+        loss_error,
+        grad_error,
+    )
+
+    assert float(loss_error.item()) == 0.0
+    assert float(grad_error.item()) == 0.0

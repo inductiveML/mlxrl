@@ -458,6 +458,7 @@ def run_mlxrl_worker(args: argparse.Namespace) -> BenchResult:
             rewards=rewards,
             group_size=args.group_size,
             pad_token_id=pad_token_id,
+            compute_reference=args.beta != 0.0,
             algorithm=algorithm,
         )
         metrics = optimizer_step(

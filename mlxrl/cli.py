@@ -228,6 +228,7 @@ def _build_equivalence_batch(
         group_size=group_size,
         pad_token_id=pad_token_id,
         use_checkpoint=use_checkpoint,
+        compute_reference=beta != 0.0,
     )
     metrics = grpo_metrics_from_batch(
         model,
@@ -248,7 +249,12 @@ def _build_equivalence_batch(
 def _phase1_gsm8k(args: argparse.Namespace) -> int:
     model, tokenizer, _ = load_policy_with_lora(
         model_id=args.model,
-        config=LoRAConfig(rank=args.rank, scale=args.scale, dropout=args.dropout),
+        config=LoRAConfig(
+            rank=args.rank,
+            scale=args.scale,
+            dropout=args.dropout,
+            grad_checkpoint=args.checkpoint_completion_forward,
+        ),
     )
     optimizer = optim.Adam(learning_rate=args.learning_rate)
     pad_token_id = pad_token_id_from_tokenizer(tokenizer)
@@ -289,6 +295,7 @@ def _phase1_gsm8k(args: argparse.Namespace) -> int:
             group_size=args.group_size,
             pad_token_id=pad_token_id,
             use_checkpoint=args.checkpoint_completion_forward,
+            compute_reference=args.beta != 0.0,
             algorithm=algorithm,
         )
         metrics = optimizer_step(
@@ -357,7 +364,12 @@ def _phase1_gsm8k(args: argparse.Namespace) -> int:
 def _phase2_equivalence(args: argparse.Namespace) -> int:
     model, tokenizer, _ = load_policy_with_lora(
         model_id=args.model,
-        config=LoRAConfig(rank=args.rank, scale=args.scale, dropout=args.dropout),
+        config=LoRAConfig(
+            rank=args.rank,
+            scale=args.scale,
+            dropout=args.dropout,
+            grad_checkpoint=args.checkpoint_completion_forward,
+        ),
     )
     pad_token_id = pad_token_id_from_tokenizer(tokenizer)
     sampling = _sampling_config(args)

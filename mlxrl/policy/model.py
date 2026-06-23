@@ -35,6 +35,7 @@ class LoRAConfig:
     scale: float = 20.0
     dropout: float = 0.0
     target_suffixes: tuple[str, ...] | None = None
+    grad_checkpoint: bool = False
 
 
 @dataclass(frozen=True)
@@ -129,6 +130,24 @@ def injected_lora_target_keys(model: nn.Module) -> tuple[str, ...]:
     return tuple(sorted(keys))
 
 
+def enable_grad_checkpointing(model: nn.Module) -> bool:
+    """Enable MLX-LM per-transformer-block gradient checkpointing once."""
+
+    layers = get_transformer_layers(model)
+    if not layers:
+        raise ValueError("Model does not expose any transformer layers.")
+    layer_type = type(layers[0])
+    layer_type_any = cast(Any, layer_type)
+    if layer_type_any.__dict__.get("_mlxrl_grad_checkpoint_enabled", False):
+        return False
+
+    from mlx_lm.tuner.trainer import grad_checkpoint
+
+    grad_checkpoint(layers[0])
+    layer_type_any._mlxrl_grad_checkpoint_enabled = True
+    return True
+
+
 def inject_lora_adapters(model: nn.Module, config: LoRAConfig) -> tuple[str, ...]:
     """Inject MLX-LM LoRA layers into all attention and MLP projections."""
 
@@ -145,6 +164,8 @@ def inject_lora_adapters(model: nn.Module, config: LoRAConfig) -> tuple[str, ...
         lora_config["keys"] = set(target_keys)
 
     linear_to_lora_layers(model, num_layers=layer_count, config=lora_config)
+    if config.grad_checkpoint:
+        enable_grad_checkpointing(model)
     assert_lora_on_every_layer(model)
     return injected_lora_target_keys(model)
 
@@ -161,6 +182,7 @@ def strict_lora_config(
         scale=scale,
         dropout=dropout,
         target_suffixes=DEFAULT_LORA_TARGET_SUFFIXES,
+        grad_checkpoint=False,
     )
 
 

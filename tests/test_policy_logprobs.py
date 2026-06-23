@@ -5,7 +5,11 @@ from collections.abc import Sequence
 import mlx.core as mx
 import mlx.nn as nn
 
-from mlxrl.policy.logprobs import completion_logprobs, prefix_cached_completion_logprobs
+from mlxrl.policy.logprobs import (
+    completion_logprobs,
+    dual_logprobs,
+    prefix_cached_completion_logprobs,
+)
 from mlxrl.rollout.naive import Completion, SamplingConfig
 from mlxrl.rollout.optimized import generate_from_prefix_cache, prefill_prompt_once
 from mlxrl.train.grpo import batch_from_rollouts, old_policy_logprobs_from_rollouts
@@ -121,6 +125,29 @@ def test_rollout_captured_logprobs_match_completion_forward_on_toy_model() -> No
     )
 
     assert float(max_error.item()) < 1e-6
+
+
+def test_dual_logprobs_can_skip_reference_forward_for_zero_beta() -> None:
+    model = ToyCachedModel()
+    prompts = ((2, 3, 4), (2, 3, 4))
+    completions = ((5, 6), (7,))
+
+    dual = dual_logprobs(
+        model,
+        prompts,
+        completions,
+        pad_token_id=0,
+        compute_reference=False,
+    )
+    max_error = mx.max(mx.abs(dual.policy - dual.reference))
+    mx.eval(  # Test sync: materialize policy/reference comparison.
+        max_error,
+        dual.mask,
+    )
+
+    assert float(max_error.item()) == 0.0
+    assert dual.mask.tolist() == [[1.0, 1.0], [1.0, 0.0]]
+    assert model.cached_call_shapes == []
 
 
 def test_old_policy_logprobs_from_rollouts_pad_to_completion_mask() -> None:

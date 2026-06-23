@@ -15,6 +15,7 @@ from mlxrl.policy.logprobs import (
     completion_logprobs,
     dual_logprobs,
 )
+from mlxrl.policy.model import enable_grad_checkpointing
 from mlxrl.rollout.naive import Completion
 
 
@@ -50,6 +51,7 @@ def batch_from_rollouts(
     group_size: int,
     pad_token_id: int,
     use_checkpoint: bool = False,
+    compute_reference: bool = True,
     algorithm: PolicyAlgorithm | None = None,
 ) -> GRPOBatch:
     """Compute old policy/ref logprobs and group-normalized advantages."""
@@ -58,6 +60,8 @@ def batch_from_rollouts(
         raise ValueError("completions and rewards must have the same length.")
     if not completions:
         raise ValueError("At least one completion is required.")
+    if use_checkpoint:
+        enable_grad_checkpointing(model)
     prompt_token_ids = tuple(completion.prompt_tokens for completion in completions)
     completion_token_ids = tuple(completion.completion_tokens for completion in completions)
     dual = dual_logprobs(
@@ -66,6 +70,7 @@ def batch_from_rollouts(
         completion_token_ids,
         pad_token_id,
         use_checkpoint=use_checkpoint,
+        compute_reference=compute_reference,
     )
     mx.eval(  # Logprob sync: freeze old-policy/ref logprobs before adapter mutation.
         dual.policy,
@@ -128,6 +133,8 @@ def grpo_metrics_from_batch(
     """Recompute policy logprobs and evaluate GRPO metrics."""
 
     active_algorithm = algorithm or GRPOAlgorithm()
+    if use_checkpoint:
+        enable_grad_checkpointing(model)
     current = completion_logprobs(
         model,
         batch.prompt_token_ids,
@@ -157,6 +164,7 @@ def optimizer_step(
     """Run value_and_grad over currently trainable adapter parameters once."""
 
     active_algorithm = algorithm or GRPOAlgorithm()
+    model.train()
 
     def loss_fn(
         model: nn.Module,
@@ -195,6 +203,7 @@ def optimizer_step(
         model.state,
         optimizer.state,
     )
+    model.eval()
     return StepMetrics(
         loss=float(loss.item()),
         policy_gradient_loss=float(policy_gradient_loss.item()),
