@@ -9,3 +9,5 @@ dist/
 build/
 *.egg-info/
 .pyright/
+reference_outputs/
+runs/

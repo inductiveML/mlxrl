@@ -43,6 +43,7 @@ def test_accuracy_reward_matches_normalized_extracted_answers() -> None:
     answer = "The answer is #### 1234"
 
     assert accuracy_reward(completion, answer=answer) == 1.0
+    assert accuracy_reward("<answer>48 + 24 = 72</answer>", answer="#### 72") == 1.0
     assert accuracy_reward("<answer>5</answer>", answer="#### 6") == 0.0
     assert accuracy_reward("no answer", answer="#### 6") == 0.0
 
@@ -51,4 +52,3 @@ def test_format_reward_requires_non_empty_answer_tag() -> None:
     assert format_reward("some work <answer>4</answer>") == 1.0
     assert format_reward("some work <answer> </answer>") == 0.0
     assert format_reward("some work #### 4") == 0.0
-

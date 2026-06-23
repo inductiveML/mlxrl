@@ -65,6 +65,9 @@ def extract_answer(text: str | None) -> str | None:
 def _normalize_answer(value: str | None) -> str | None:
     if value is None:
         return None
+    numbers = _NUMBER_RE.findall(value)
+    if numbers:
+        return numbers[-1].replace(",", "").lower()
     return value.strip().replace(",", "").lower()
 
 
@@ -96,4 +99,3 @@ def extract_answer_from_tag(text: str | None) -> str | None:
         return None
     answer = tagged.group(1).strip()
     return answer or None
-
