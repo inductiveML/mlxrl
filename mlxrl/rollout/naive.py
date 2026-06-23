@@ -31,6 +31,7 @@ class Completion:
     group_index: int
     prompt_tokens: tuple[int, ...]
     completion_tokens: tuple[int, ...]
+    old_policy_logprobs: tuple[float, ...]
     text: str
 
 
@@ -82,7 +83,7 @@ def generate_completion(
     prompt_tokens: Sequence[int],
     config: SamplingConfig,
     eos_token_ids: frozenset[int] | None = None,
-) -> tuple[tuple[int, ...], str]:
+) -> tuple[tuple[int, ...], tuple[float, ...], str]:
     """Generate one completion with a fresh KV cache and no group sharing."""
 
     if config.max_tokens < 1:
@@ -101,20 +102,39 @@ def generate_completion(
     prompt_cache = make_prompt_cache(model)
     current = mx.array(list(prompt_tokens), dtype=mx.int32)
     completion: list[int] = []
+    old_policy_logprobs: list[float] = []
 
     for _ in range(config.max_tokens):
         logits = model(current[None], cache=prompt_cache)
         logits = logits[:, -1, :]
         logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
         next_token = sampler(logprobs)
-        mx.eval(next_token)  # Rollout sync: Python needs the sampled token to append/EOS-check.
+        sampled_logprob = sampled_token_logprobs(logprobs, next_token)
+        mx.eval(  # Rollout sync: materialize sampled token/logprob for append/EOS-check.
+            next_token,
+            sampled_logprob,
+        )
         token_id = int(next_token.item())
         completion.append(token_id)
+        old_policy_logprobs.append(float(sampled_logprob.item()))
         if token_id in eos_ids:
             break
         current = next_token
 
-    return tuple(completion), decode_completion(tokenizer, completion)
+    return (
+        tuple(completion),
+        tuple(old_policy_logprobs),
+        decode_completion(tokenizer, completion),
+    )
+
+
+def sampled_token_logprobs(logprobs: mx.array, token_ids: mx.array) -> mx.array:
+    """Gather raw model logprobs for sampled tokens."""
+
+    return mx.squeeze(
+        mx.take_along_axis(logprobs, token_ids[:, None], axis=-1),
+        axis=-1,
+    )
 
 
 def generate_group_rollouts(
@@ -142,7 +162,7 @@ def generate_group_rollouts(
             use_chat_template=use_chat_template,
         )
         for group_index in range(group_size):
-            completion_tokens, text = generate_completion(
+            completion_tokens, old_policy_logprobs, text = generate_completion(
                 model=model,
                 tokenizer=tokenizer,
                 prompt_tokens=prompt_tokens,
@@ -155,6 +175,7 @@ def generate_group_rollouts(
                     group_index=group_index,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
+                    old_policy_logprobs=old_policy_logprobs,
                     text=text,
                 )
             )

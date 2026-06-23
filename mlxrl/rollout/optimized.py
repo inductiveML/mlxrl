@@ -18,6 +18,7 @@ from mlxrl.rollout.naive import (
     decode_completion,
     encode_chat_prompt,
     eos_token_ids_from_tokenizer,
+    sampled_token_logprobs,
 )
 
 
@@ -248,7 +249,7 @@ def generate_from_prefix_cache(
     config: SamplingConfig,
     eos_token_ids: frozenset[int],
     compile_decode_step: bool = False,
-) -> tuple[tuple[int, ...], str]:
+) -> tuple[tuple[int, ...], tuple[float, ...], str]:
     """Decode one completion from a cloned prefix cache."""
 
     if config.max_tokens < 1:
@@ -267,26 +268,45 @@ def generate_from_prefix_cache(
         cache = clone_prompt_cache(prefix.cache)
         decode_logprobs = _decode_logprobs(model, cache)
     completion: list[int] = []
+    old_policy_logprobs: list[float] = []
 
     next_token = sampler(prefix.first_logprobs)
-    mx.eval(next_token)  # Rollout sync: Python needs the sampled token to append/EOS-check.
+    sampled_logprob = sampled_token_logprobs(prefix.first_logprobs, next_token)
+    mx.eval(  # Rollout sync: materialize sampled token/logprob for append/EOS-check.
+        next_token,
+        sampled_logprob,
+    )
     token_id = int(next_token.item())
     completion.append(token_id)
+    old_policy_logprobs.append(float(sampled_logprob.item()))
     if token_id in eos_token_ids:
-        return tuple(completion), decode_completion(tokenizer, completion)
+        return (
+            tuple(completion),
+            tuple(old_policy_logprobs),
+            decode_completion(tokenizer, completion),
+        )
 
     current = next_token
     for _ in range(1, config.max_tokens):
         logprobs = decode_logprobs(current)
         next_token = sampler(logprobs)
-        mx.eval(next_token)  # Rollout sync: Python needs the sampled token to append/EOS-check.
+        sampled_logprob = sampled_token_logprobs(logprobs, next_token)
+        mx.eval(  # Rollout sync: materialize sampled token/logprob for append/EOS-check.
+            next_token,
+            sampled_logprob,
+        )
         token_id = int(next_token.item())
         completion.append(token_id)
+        old_policy_logprobs.append(float(sampled_logprob.item()))
         if token_id in eos_token_ids:
             break
         current = next_token
 
-    return tuple(completion), decode_completion(tokenizer, completion)
+    return (
+        tuple(completion),
+        tuple(old_policy_logprobs),
+        decode_completion(tokenizer, completion),
+    )
 
 
 def generate_group_from_prefix_cache(
@@ -297,7 +317,7 @@ def generate_group_from_prefix_cache(
     config: SamplingConfig,
     eos_token_ids: frozenset[int],
     compile_decode_step: bool = False,
-) -> tuple[tuple[tuple[int, ...], str], ...]:
+) -> tuple[tuple[tuple[int, ...], tuple[float, ...], str], ...]:
     """Decode a whole prompt group in one batched KV cache when safe."""
 
     return generate_prompt_set_from_prefix_caches(
@@ -319,7 +339,7 @@ def generate_prompt_set_from_prefix_caches(
     config: SamplingConfig,
     eos_token_ids: frozenset[int],
     compile_decode_step: bool = False,
-) -> tuple[tuple[tuple[int, ...], str], ...]:
+) -> tuple[tuple[tuple[int, ...], tuple[float, ...], str], ...]:
     """Decode all prompt groups together with completion-major RNG keys."""
 
     if config.max_tokens < 1:
@@ -362,6 +382,7 @@ def generate_prompt_set_from_prefix_caches(
     )
 
     rows: list[list[int]] = [[] for _ in range(row_count)]
+    old_policy_logprob_rows: list[list[float]] = [[] for _ in range(row_count)]
     active = [True] * row_count
     early_eos = False
     next_token = _sample_batched_logprobs(
@@ -369,10 +390,17 @@ def generate_prompt_set_from_prefix_caches(
         config,
         None if draw_keys is None else [row[0] for row in draw_keys],
     )
-    mx.eval(next_token)  # Rollout sync: Python needs sampled tokens to append/EOS-check.
+    sampled_logprob = sampled_token_logprobs(first_logprobs, next_token)
+    mx.eval(  # Rollout sync: materialize sampled tokens/logprobs for append/EOS-check.
+        next_token,
+        sampled_logprob,
+    )
     current = next_token
-    for row_index, token_id in enumerate(_token_ids(next_token)):
+    for row_index, (token_id, logprob) in enumerate(
+        zip(_token_ids(next_token), _logprob_values(sampled_logprob), strict=True)
+    ):
         rows[row_index].append(token_id)
+        old_policy_logprob_rows[row_index].append(logprob)
         if token_id in eos_token_ids:
             active[row_index] = False
             early_eos = config.max_tokens > 1
@@ -384,11 +412,18 @@ def generate_prompt_set_from_prefix_caches(
             config,
             None if draw_keys is None else [row[step] for row in draw_keys],
         )
-        mx.eval(next_token)  # Rollout sync: Python needs sampled tokens to append/EOS-check.
-        for row_index, token_id in enumerate(_token_ids(next_token)):
+        sampled_logprob = sampled_token_logprobs(logprobs, next_token)
+        mx.eval(  # Rollout sync: materialize sampled tokens/logprobs for append/EOS-check.
+            next_token,
+            sampled_logprob,
+        )
+        for row_index, (token_id, logprob) in enumerate(
+            zip(_token_ids(next_token), _logprob_values(sampled_logprob), strict=True)
+        ):
             if not active[row_index]:
                 continue
             rows[row_index].append(token_id)
+            old_policy_logprob_rows[row_index].append(logprob)
             if token_id in eos_token_ids:
                 active[row_index] = False
                 early_eos = step < config.max_tokens - 1
@@ -398,7 +433,7 @@ def generate_prompt_set_from_prefix_caches(
 
     if early_eos:
         _set_random_state(start_random_state)
-        outputs: list[tuple[tuple[int, ...], str]] = []
+        outputs: list[tuple[tuple[int, ...], tuple[float, ...], str]] = []
         for prefix in prefixes:
             outputs.extend(
                 generate_from_prefix_cache(
@@ -417,8 +452,16 @@ def generate_prompt_set_from_prefix_caches(
         _set_random_state(final_random_state)
 
     return tuple(
-        (tuple(row), decode_completion(tokenizer, row))
-        for row in rows
+        (
+            tuple(row),
+            tuple(old_policy_logprobs),
+            decode_completion(tokenizer, row),
+        )
+        for row, old_policy_logprobs in zip(
+            rows,
+            old_policy_logprob_rows,
+            strict=True,
+        )
     )
 
 
@@ -455,6 +498,11 @@ def _set_random_state(state: mx.array) -> None:
 def _token_ids(tokens: mx.array) -> list[int]:
     values = cast(Sequence[Any], tokens.tolist())
     return [int(token) for token in values]
+
+
+def _logprob_values(logprobs: mx.array) -> list[float]:
+    values = cast(Sequence[Any], logprobs.tolist())
+    return [float(value) for value in values]
 
 
 def _completion_major_draw_keys(
@@ -545,7 +593,9 @@ def generate_prefix_cached_group_rollouts(
             eos_token_ids=eos_ids,
             compile_decode_step=compile_decode_step,
         )
-        for row_index, (completion_tokens, text) in enumerate(batched_outputs):
+        for row_index, (completion_tokens, old_policy_logprobs, text) in enumerate(
+            batched_outputs
+        ):
             prompt_index = row_index // group_size
             group_index = row_index % group_size
             completions.append(
@@ -554,6 +604,7 @@ def generate_prefix_cached_group_rollouts(
                     group_index=group_index,
                     prompt_tokens=prompt_tokens_by_index[prompt_index],
                     completion_tokens=completion_tokens,
+                    old_policy_logprobs=old_policy_logprobs,
                     text=text,
                 )
             )
@@ -573,13 +624,16 @@ def generate_prefix_cached_group_rollouts(
             )
             for _ in range(group_size)
         )
-        for group_index, (completion_tokens, text) in enumerate(group_outputs):
+        for group_index, (completion_tokens, old_policy_logprobs, text) in enumerate(
+            group_outputs
+        ):
             completions.append(
                 Completion(
                     prompt_index=prompt_index,
                     group_index=group_index,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
+                    old_policy_logprobs=old_policy_logprobs,
                     text=text,
                 )
             )

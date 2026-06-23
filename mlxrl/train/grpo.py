@@ -10,7 +10,12 @@ import mlx.nn as nn
 import mlx.optimizers as optim
 
 from mlxrl.algo.grpo import AlgorithmLossMetrics, GRPOAlgorithm, PolicyAlgorithm
-from mlxrl.policy.logprobs import completion_logprobs, dual_logprobs
+from mlxrl.policy.logprobs import (
+    CompletionLogprobs,
+    adapters_disabled,
+    completion_logprobs,
+    prefix_cached_completion_logprobs,
+)
 from mlxrl.rollout.naive import Completion
 
 
@@ -48,27 +53,30 @@ def batch_from_rollouts(
     use_checkpoint: bool = False,
     algorithm: PolicyAlgorithm | None = None,
 ) -> GRPOBatch:
-    """Compute old policy/ref logprobs and group-normalized advantages."""
+    """Load rollout old-policy logprobs, compute ref logprobs, and advantages."""
 
     if len(completions) != len(rewards):
         raise ValueError("completions and rewards must have the same length.")
     if not completions:
         raise ValueError("At least one completion is required.")
+    del use_checkpoint
 
     prompt_token_ids = tuple(completion.prompt_tokens for completion in completions)
     completion_token_ids = tuple(completion.completion_tokens for completion in completions)
-    dual = dual_logprobs(
-        model,
-        prompt_token_ids,
-        completion_token_ids,
-        pad_token_id,
-        use_checkpoint=use_checkpoint,
-    )
-    mx.eval(  # Logprob sync: freeze rollout/ref logprobs before adapter mutation.
-        dual.policy,
-        dual.reference,
-        dual.mask,
-    )
+    old_policy = old_policy_logprobs_from_rollouts(completions)
+    with adapters_disabled(model):
+        reference = prefix_cached_completion_logprobs(
+            model,
+            prompt_token_ids,
+            completion_token_ids,
+            pad_token_id,
+        )
+        mx.eval(  # Logprob sync: freeze rollout/ref logprobs before adapter mutation.
+            old_policy.logprobs,
+            old_policy.mask,
+            reference.logprobs,
+            reference.mask,
+        )
     active_algorithm = algorithm or GRPOAlgorithm()
     reward_array = mx.array(list(rewards), dtype=mx.float32)
     advantages = active_algorithm.advantages(reward_array, group_size=group_size)
@@ -77,9 +85,40 @@ def batch_from_rollouts(
         completion_token_ids=completion_token_ids,
         rewards=reward_array,
         advantages=advantages,
-        old_policy_logprobs=mx.stop_gradient(dual.policy),
-        reference_logprobs=mx.stop_gradient(dual.reference),
-        mask=dual.mask,
+        old_policy_logprobs=mx.stop_gradient(old_policy.logprobs),
+        reference_logprobs=mx.stop_gradient(reference.logprobs),
+        mask=old_policy.mask,
+    )
+
+
+def old_policy_logprobs_from_rollouts(
+    completions: Sequence[Completion],
+) -> CompletionLogprobs:
+    """Pad rollout-captured old-policy logprobs into the training tensor shape."""
+
+    if not completions:
+        raise ValueError("At least one completion is required.")
+    max_completion_len = max(len(completion.completion_tokens) for completion in completions)
+    if max_completion_len == 0:
+        raise ValueError("At least one completion token is required.")
+
+    logprob_rows: list[list[float]] = []
+    mask_rows: list[list[float]] = []
+    for completion in completions:
+        token_count = len(completion.completion_tokens)
+        if len(completion.old_policy_logprobs) != token_count:
+            raise ValueError(
+                "Each completion must carry one old-policy logprob per token."
+            )
+        pad_count = max_completion_len - token_count
+        logprob_rows.append(
+            list(completion.old_policy_logprobs) + [0.0] * pad_count
+        )
+        mask_rows.append([1.0] * token_count + [0.0] * pad_count)
+
+    return CompletionLogprobs(
+        logprobs=mx.array(logprob_rows, dtype=mx.float32),
+        mask=mx.array(mask_rows, dtype=mx.float32),
     )
 
 
