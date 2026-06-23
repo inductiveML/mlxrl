@@ -14,6 +14,8 @@ mlxrl = "mlxrl.cli:main"
 
 [dependency-groups]
 dev = [
+    "mlx-lm-lora>=2.1.0",
+    "mlx-tune>=0.5.1",
     "pyright>=1.1.390",
     "pytest>=8.3.0",
     "ruff>=0.8.0",

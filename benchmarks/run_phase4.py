@@ -296,10 +296,32 @@ def bench_env(args: argparse.Namespace, output: Path) -> dict[str, str]:
 
 
 def external_command(args: argparse.Namespace, target: str) -> str | None:
+    default_command = (
+        "python benchmarks/external_baseline_worker.py "
+        "--target {target} "
+        "--pass-index {pass_index} "
+        "--output {output} "
+        "--model {model} "
+        "--steps {steps} "
+        "--warmup-steps {warmup_steps} "
+        "--batch-size {batch_size} "
+        "--group-size {group_size} "
+        "--max-context {max_context} "
+        "--max-tokens {max_tokens} "
+        "--temperature {temperature} "
+        "--top-p {top_p} "
+        "--seed {seed} "
+        "--beta {beta} "
+        "--learning-rate {learning_rate} "
+        "--rank {rank} "
+        "--scale {scale} "
+        "--dropout {dropout} "
+        "--wired-limit-mb {wired_limit_mb}"
+    )
     if target == "mlx-tune":
-        return args.mlx_tune_command
+        return args.mlx_tune_command or default_command
     if target == "mlx-lm-lora":
-        return args.mlx_lm_lora_command
+        return args.mlx_lm_lora_command or default_command
     return None
 
 
@@ -326,6 +348,9 @@ def expand_command(
         "seed": args.seed,
         "beta": args.beta,
         "learning_rate": args.learning_rate,
+        "rank": args.rank,
+        "scale": args.scale,
+        "dropout": args.dropout,
         "wired_limit_mb": args.wired_limit_mb,
     }
     return [part.format(**values) for part in shlex.split(command_template)]
