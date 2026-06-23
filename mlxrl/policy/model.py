@@ -34,7 +34,7 @@ class LoRAConfig:
     rank: int = 8
     scale: float = 20.0
     dropout: float = 0.0
-    target_suffixes: tuple[str, ...] = DEFAULT_LORA_TARGET_SUFFIXES
+    target_suffixes: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -44,9 +44,9 @@ class Phase0Report:
     model_id: str
     layer_count: int
     lora_target_keys: tuple[str, ...]
+    lora_modules_per_layer: tuple[int, ...]
     quantized_linear_count: int
     lora_module_count: int
-    expected_lora_module_count: int
     total_params: int
     trainable_params: int
     trainable_percent: float
@@ -94,23 +94,74 @@ def assert_targets_on_every_layer(model: nn.Module, target_keys: Iterable[str]) 
             raise ValueError(f"Layer {index} is missing LoRA target modules: {missing_text}")
 
 
+def lora_module_counts_by_layer(model: nn.Module) -> tuple[int, ...]:
+    """Count injected LoRALinear modules in each transformer block."""
+
+    return tuple(
+        sum(1 for _, module in layer.named_modules() if isinstance(module, LoRALinear))
+        for layer in get_transformer_layers(model)
+    )
+
+
+def assert_lora_on_every_layer(model: nn.Module) -> tuple[int, ...]:
+    """Ensure every transformer block received at least one LoRA adapter."""
+
+    counts = lora_module_counts_by_layer(model)
+    missing = [str(index) for index, count in enumerate(counts) if count == 0]
+    if missing:
+        raise ValueError(
+            "LoRA injection left transformer layers without LoRALinear modules: "
+            + ", ".join(missing)
+        )
+    return counts
+
+
+def injected_lora_target_keys(model: nn.Module) -> tuple[str, ...]:
+    """Return unique per-layer module paths converted to LoRALinear."""
+
+    keys: set[str] = set()
+    for layer in get_transformer_layers(model):
+        for name, module in layer.named_modules():
+            if isinstance(module, LoRALinear):
+                keys.add(name)
+    if not keys:
+        raise ValueError("No LoRALinear modules found after LoRA injection.")
+    return tuple(sorted(keys))
+
+
 def inject_lora_adapters(model: nn.Module, config: LoRAConfig) -> tuple[str, ...]:
     """Inject MLX-LM LoRA layers into all attention and MLP projections."""
 
-    target_keys = discover_lora_target_keys(model, config.target_suffixes)
-    assert_targets_on_every_layer(model, target_keys)
     layer_count = len(get_transformer_layers(model))
-    linear_to_lora_layers(
-        model,
-        num_layers=layer_count,
-        config={
-            "rank": config.rank,
-            "scale": config.scale,
-            "dropout": config.dropout,
-            "keys": set(target_keys),
-        },
+    lora_config: dict[str, Any] = {
+        "rank": config.rank,
+        "scale": config.scale,
+        "dropout": config.dropout,
+    }
+    if config.target_suffixes is not None:
+        target_keys = discover_lora_target_keys(model, config.target_suffixes)
+        assert_targets_on_every_layer(model, target_keys)
+        lora_config["keys"] = set(target_keys)
+
+    linear_to_lora_layers(model, num_layers=layer_count, config=lora_config)
+    assert_lora_on_every_layer(model)
+    return injected_lora_target_keys(model)
+
+
+def strict_lora_config(
+    rank: int = 8,
+    scale: float = 20.0,
+    dropout: float = 0.0,
+) -> LoRAConfig:
+    """Return the legacy homogeneous dense-model LoRA target config."""
+
+    return LoRAConfig(
+        rank=rank,
+        scale=scale,
+        dropout=dropout,
+        target_suffixes=DEFAULT_LORA_TARGET_SUFFIXES,
     )
-    return target_keys
+
 
 
 def trainable_leaf_paths(model_or_params: Any) -> tuple[str, ...]:
@@ -170,13 +221,8 @@ def build_phase0_report(
     layer_count = len(get_transformer_layers(model))
     total_params = int(get_mlx_lm_total_parameters(model))
     trainable_params = count_parameters(model.trainable_parameters())
-    expected_lora_module_count = layer_count * len(target_keys)
-    lora_module_count = count_modules(model, LoRALinear)
-    if lora_module_count != expected_lora_module_count:
-        raise ValueError(
-            "Unexpected LoRA module count: "
-            f"expected {expected_lora_module_count}, found {lora_module_count}"
-        )
+    lora_modules_per_layer = assert_lora_on_every_layer(model)
+    lora_module_count = sum(lora_modules_per_layer)
     if trainable_params <= 0:
         raise ValueError("LoRA setup produced zero trainable parameters.")
 
@@ -184,9 +230,9 @@ def build_phase0_report(
         model_id=model_id,
         layer_count=layer_count,
         lora_target_keys=target_keys,
+        lora_modules_per_layer=lora_modules_per_layer,
         quantized_linear_count=count_modules(model, nn.QuantizedLinear),
         lora_module_count=lora_module_count,
-        expected_lora_module_count=expected_lora_module_count,
         total_params=total_params,
         trainable_params=trainable_params,
         trainable_percent=(trainable_params / total_params) * 100.0,

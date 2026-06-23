@@ -57,9 +57,12 @@ def _phase0_smoke(args: argparse.Namespace) -> int:
     print(f"model_id: {report.model_id}")
     print(f"layer_count: {report.layer_count}")
     print(f"lora_target_keys: {', '.join(report.lora_target_keys)}")
+    print(
+        "lora_modules_per_layer: "
+        + ", ".join(str(count) for count in report.lora_modules_per_layer)
+    )
     print(f"quantized_linear_count: {report.quantized_linear_count}")
     print(f"lora_module_count: {report.lora_module_count}")
-    print(f"expected_lora_module_count: {report.expected_lora_module_count}")
     print(f"total_params: {report.total_params}")
     print(f"trainable_params: {report.trainable_params}")
     print(f"trainable_percent: {report.trainable_percent:.6f}")

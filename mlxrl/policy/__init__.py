@@ -14,8 +14,10 @@ from mlxrl.policy.model import (
     DEFAULT_MODEL_ID,
     LoRAConfig,
     Phase0Report,
+    assert_lora_on_every_layer,
     assert_only_lora_trainable,
     load_policy_with_lora,
+    strict_lora_config,
 )
 
 __all__ = [
@@ -26,10 +28,12 @@ __all__ = [
     "LoRAConfig",
     "Phase0Report",
     "adapters_disabled",
+    "assert_lora_on_every_layer",
     "assert_only_lora_trainable",
     "completion_logprobs",
     "dual_logprobs",
     "load_policy_with_lora",
     "pad_token_id_from_tokenizer",
     "prefix_cached_completion_logprobs",
+    "strict_lora_config",
 ]

@@ -153,7 +153,7 @@ def test_old_policy_logprobs_from_rollouts_pad_to_completion_mask() -> None:
     assert old_policy.mask.tolist() == [[1.0, 1.0], [1.0, 0.0]]
 
 
-def test_batch_from_rollouts_uses_stored_old_policy_logprobs() -> None:
+def test_batch_from_rollouts_recomputes_old_policy_logprobs() -> None:
     model = ToyCachedModel()
     completions = (
         Completion(
@@ -161,7 +161,7 @@ def test_batch_from_rollouts_uses_stored_old_policy_logprobs() -> None:
             group_index=0,
             prompt_tokens=(2, 3, 4),
             completion_tokens=(5, 6),
-            old_policy_logprobs=(-1.0, -2.0),
+            old_policy_logprobs=(-999.0, -999.0),
             text="5 6",
         ),
         Completion(
@@ -169,9 +169,15 @@ def test_batch_from_rollouts_uses_stored_old_policy_logprobs() -> None:
             group_index=1,
             prompt_tokens=(2, 3, 4),
             completion_tokens=(7,),
-            old_policy_logprobs=(-3.0,),
+            old_policy_logprobs=(-999.0,),
             text="7",
         ),
+    )
+    expected = completion_logprobs(
+        model,
+        tuple(completion.prompt_tokens for completion in completions),
+        tuple(completion.completion_tokens for completion in completions),
+        pad_token_id=0,
     )
 
     batch = batch_from_rollouts(
@@ -184,8 +190,11 @@ def test_batch_from_rollouts_uses_stored_old_policy_logprobs() -> None:
     mx.eval(  # Test sync: materialize batch logprobs/mask for assertions.
         batch.old_policy_logprobs,
         batch.mask,
+        expected.logprobs,
     )
 
-    assert batch.old_policy_logprobs.tolist() == [[-1.0, -2.0], [-3.0, 0.0]]
+    max_error = mx.max(mx.abs(batch.old_policy_logprobs - expected.logprobs))
+    mx.eval(max_error)  # Test sync: materialize recomputed old-policy comparison.
+    assert float(max_error.item()) < 1e-6
     assert batch.mask.tolist() == [[1.0, 1.0], [1.0, 0.0]]
     assert model.cached_call_shapes == [(1, 2), (2, 2)]

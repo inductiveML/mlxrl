@@ -12,9 +12,8 @@ import mlx.optimizers as optim
 from mlxrl.algo.grpo import AlgorithmLossMetrics, GRPOAlgorithm, PolicyAlgorithm
 from mlxrl.policy.logprobs import (
     CompletionLogprobs,
-    adapters_disabled,
     completion_logprobs,
-    prefix_cached_completion_logprobs,
+    dual_logprobs,
 )
 from mlxrl.rollout.naive import Completion
 
@@ -53,30 +52,26 @@ def batch_from_rollouts(
     use_checkpoint: bool = False,
     algorithm: PolicyAlgorithm | None = None,
 ) -> GRPOBatch:
-    """Load rollout old-policy logprobs, compute ref logprobs, and advantages."""
+    """Compute old policy/ref logprobs and group-normalized advantages."""
 
     if len(completions) != len(rewards):
         raise ValueError("completions and rewards must have the same length.")
     if not completions:
         raise ValueError("At least one completion is required.")
-    del use_checkpoint
-
     prompt_token_ids = tuple(completion.prompt_tokens for completion in completions)
     completion_token_ids = tuple(completion.completion_tokens for completion in completions)
-    old_policy = old_policy_logprobs_from_rollouts(completions)
-    with adapters_disabled(model):
-        reference = prefix_cached_completion_logprobs(
-            model,
-            prompt_token_ids,
-            completion_token_ids,
-            pad_token_id,
-        )
-        mx.eval(  # Logprob sync: freeze rollout/ref logprobs before adapter mutation.
-            old_policy.logprobs,
-            old_policy.mask,
-            reference.logprobs,
-            reference.mask,
-        )
+    dual = dual_logprobs(
+        model,
+        prompt_token_ids,
+        completion_token_ids,
+        pad_token_id,
+        use_checkpoint=use_checkpoint,
+    )
+    mx.eval(  # Logprob sync: freeze old-policy/ref logprobs before adapter mutation.
+        dual.policy,
+        dual.reference,
+        dual.mask,
+    )
     active_algorithm = algorithm or GRPOAlgorithm()
     reward_array = mx.array(list(rewards), dtype=mx.float32)
     advantages = active_algorithm.advantages(reward_array, group_size=group_size)
@@ -85,9 +80,9 @@ def batch_from_rollouts(
         completion_token_ids=completion_token_ids,
         rewards=reward_array,
         advantages=advantages,
-        old_policy_logprobs=mx.stop_gradient(old_policy.logprobs),
-        reference_logprobs=mx.stop_gradient(reference.logprobs),
-        mask=old_policy.mask,
+        old_policy_logprobs=mx.stop_gradient(dual.policy),
+        reference_logprobs=mx.stop_gradient(dual.reference),
+        mask=dual.mask,
     )
 
 
