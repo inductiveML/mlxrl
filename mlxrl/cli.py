@@ -320,6 +320,10 @@ def _phase2_equivalence(args: argparse.Namespace) -> int:
         "seed": args.seed,
         "use_chat_template": args.use_chat_template,
     }
+    phase2_rollout_kwargs = {
+        **rollout_kwargs,
+        "compile_decode_step": args.compile_decode_step,
+    }
 
     phase1_completions, phase1_elapsed, phase1_peak = _rollout_timed(
         generate_group_rollouts,
@@ -328,8 +332,8 @@ def _phase2_equivalence(args: argparse.Namespace) -> int:
     )
     phase2_completions, phase2_elapsed, phase2_peak = _rollout_timed(
         generate_prefix_cached_group_rollouts,
-        "phase2_prefix",
-        **rollout_kwargs,
+        "phase2_compiled" if args.compile_decode_step else "phase2_prefix",
+        **phase2_rollout_kwargs,
     )
 
     phase1_tokens = tuple(completion.completion_tokens for completion in phase1_completions)
@@ -476,6 +480,7 @@ def build_parser() -> argparse.ArgumentParser:
     phase2.add_argument("--dropout", type=float, default=0.0)
     phase2.add_argument("--use-chat-template", action="store_true")
     phase2.add_argument("--checkpoint-completion-forward", action="store_true")
+    phase2.add_argument("--compile-decode-step", action="store_true")
     phase2.add_argument("--tolerance", type=float, default=1e-4)
     phase2.add_argument("--output", default="reference_outputs/phase2_prefix_reference.npz")
     phase2.set_defaults(func=_phase2_equivalence)

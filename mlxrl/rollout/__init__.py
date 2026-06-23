@@ -2,17 +2,21 @@
 
 from mlxrl.rollout.naive import Completion, SamplingConfig, generate_group_rollouts
 from mlxrl.rollout.optimized import (
+    FixedKVCache,
     PrefixCache,
     clone_prompt_cache,
+    fixed_decode_cache_from_prefix,
     generate_prefix_cached_group_rollouts,
     prefill_prompt_once,
 )
 
 __all__ = [
     "Completion",
+    "FixedKVCache",
     "PrefixCache",
     "SamplingConfig",
     "clone_prompt_cache",
+    "fixed_decode_cache_from_prefix",
     "generate_group_rollouts",
     "generate_prefix_cached_group_rollouts",
     "prefill_prompt_once",
