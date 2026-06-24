@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
 import mlx.optimizers as optim
+from mlx.utils import tree_map
 
 from mlxrl.algo.grpo import AlgorithmLossMetrics, GRPOAlgorithm, PolicyAlgorithm
 from mlxrl.policy.logprobs import (
@@ -42,6 +44,24 @@ class StepMetrics:
     mean_ratio: float
     clip_fraction: float
     mean_reward: float
+
+
+def _slice_batch(batch: GRPOBatch, start: int, end: int) -> GRPOBatch:
+    """Slice a GRPO batch and trim right-padding to the chunk completion width."""
+
+    completion_token_ids = batch.completion_token_ids[start:end]
+    if not completion_token_ids:
+        raise ValueError("Cannot slice an empty micro-batch.")
+    width = max(len(completion) for completion in completion_token_ids)
+    return GRPOBatch(
+        prompt_token_ids=batch.prompt_token_ids[start:end],
+        completion_token_ids=completion_token_ids,
+        rewards=batch.rewards[start:end],
+        advantages=batch.advantages[start:end],
+        old_policy_logprobs=batch.old_policy_logprobs[start:end, :width],
+        reference_logprobs=batch.reference_logprobs[start:end, :width],
+        mask=batch.mask[start:end, :width],
+    )
 
 
 def batch_from_rollouts(
@@ -152,6 +172,19 @@ def grpo_metrics_from_batch(
     )
 
 
+def _uses_token_mean_reduction(algorithm: PolicyAlgorithm) -> bool:
+    """Return whether token-count weighting composes exact micro-batch gradients."""
+
+    name = algorithm.name
+    if name in {"grpo", "dapo"}:
+        return True
+    if name == "dr-grpo":
+        return getattr(algorithm, "loss_reduction", None) == "token_mean"
+    if name == "gspo":
+        return getattr(algorithm, "importance", None) == "token"
+    return False
+
+
 def optimizer_step(
     model: nn.Module,
     optimizer: optim.Optimizer,
@@ -159,19 +192,30 @@ def optimizer_step(
     beta: float,
     pad_token_id: int,
     use_checkpoint: bool = False,
+    micro_batch_size: int = 0,
     algorithm: PolicyAlgorithm | None = None,
 ) -> StepMetrics:
     """Run value_and_grad over currently trainable adapter parameters once."""
 
     active_algorithm = algorithm or GRPOAlgorithm()
+    if micro_batch_size < 0:
+        raise ValueError("micro_batch_size must be non-negative.")
+    num_completions = len(batch.completion_token_ids)
+    chunked = 0 < micro_batch_size < num_completions
+    if chunked and not _uses_token_mean_reduction(active_algorithm):
+        raise ValueError(
+            "micro_batch_size currently supports token-mean policy losses only; "
+            f"{active_algorithm.name} uses sequence-level reduction."
+        )
     model.train()
 
     def loss_fn(
         model: nn.Module,
+        sub: GRPOBatch,
     ) -> tuple[mx.array, tuple[mx.array, mx.array, mx.array, mx.array]]:
         metrics = grpo_metrics_from_batch(
             model,
-            batch,
+            sub,
             beta,
             pad_token_id,
             use_checkpoint=use_checkpoint,
@@ -184,10 +228,60 @@ def optimizer_step(
             metrics.clip_fraction,
         )
 
-    value_and_grad = nn.value_and_grad(model, loss_fn)
-    (loss, (policy_gradient_loss, kl, mean_ratio, clip_fraction)), gradients = (
-        value_and_grad(model)
-    )
+    gradients: Any | None
+    if not chunked:
+        (loss, (policy_gradient_loss, kl, mean_ratio, clip_fraction)), gradients = (
+            nn.value_and_grad(model, lambda m: loss_fn(m, batch))(model)
+        )
+    else:
+        total_tokens_array = mx.sum(batch.mask)
+        mx.eval(  # Micro-batch sync: materialize token denominator for chunk weights.
+            total_tokens_array
+        )
+        total_tokens = float(total_tokens_array.item())
+        if total_tokens <= 0.0:
+            raise ValueError("Cannot micro-batch a GRPO batch with no valid tokens.")
+        gradients = None
+        loss = policy_gradient_loss = kl = mean_ratio = clip_fraction = mx.array(
+            0.0,
+            dtype=mx.float32,
+        )
+        for start in range(0, num_completions, micro_batch_size):
+            end = min(start + micro_batch_size, num_completions)
+            sub = _slice_batch(batch, start, end)
+            sub_tokens_array = mx.sum(sub.mask)
+            mx.eval(  # Micro-batch sync: materialize chunk token count for weighting.
+                sub_tokens_array
+            )
+            weight = float(sub_tokens_array.item()) / total_tokens
+            (sub_loss, sub_aux), sub_grad = nn.value_and_grad(
+                model,
+                lambda m, _s=sub: loss_fn(m, _s),
+            )(model)
+            sub_grad = tree_map(
+                lambda gradient, _weight=weight: gradient * _weight,
+                sub_grad,
+            )
+            gradients = (
+                sub_grad
+                if gradients is None
+                else tree_map(lambda left, right: left + right, gradients, sub_grad)
+            )
+            loss = loss + sub_loss * weight
+            policy_gradient_loss = policy_gradient_loss + sub_aux[0] * weight
+            kl = kl + sub_aux[1] * weight
+            mean_ratio = mean_ratio + sub_aux[2] * weight
+            clip_fraction = clip_fraction + sub_aux[3] * weight
+            mx.eval(  # Micro-batch sync: free this chunk's backward graph before next chunk.
+                gradients,
+                loss,
+                policy_gradient_loss,
+                kl,
+                mean_ratio,
+                clip_fraction,
+            )
+    if gradients is None:
+        raise RuntimeError("Micro-batch gradient accumulation produced no gradients.")
     mean_reward = mx.mean(batch.rewards)
     mx.eval(  # Optimizer pre-step sync: freeze gradients/diagnostics before weight mutation.
         gradients,
