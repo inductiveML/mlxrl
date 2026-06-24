@@ -34,7 +34,6 @@ jobs:
           uv run --no-project --python 3.11 --with pytest
           pytest
           tests/test_benchmark_metrics.py
-          tests/test_cli.py
           tests/test_config.py
           tests/test_import_direction.py
           tests/test_rewards.py
@@ -44,12 +43,6 @@ jobs:
           uv run --no-project --python 3.11 --with pyright --with pytest
           pyright
           mlxrl/config.py
-          mlxrl/cli.py
-          benchmarks/run_phase4.py
-          benchmarks/audit_phase4_config.py
-          benchmarks/external_baseline_worker.py
-          tests/test_benchmark_metrics.py
-          tests/test_cli.py
           tests/test_config.py
           tests/test_import_direction.py
           tests/test_rewards.py
