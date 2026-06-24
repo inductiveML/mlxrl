@@ -25,3 +25,5 @@ and this project uses semantic versioning once releases are cut.
 
 - `mlxrl` is pre-1.0; public APIs may change while the correctness gates settle.
 - Full MLX/Metal tests require Apple Silicon or a self-hosted Mac runner.
+- Published on PyPI as `inductive-mlxrl`; the import package and CLI command
+  remain `mlxrl`.

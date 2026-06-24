@@ -660,6 +660,39 @@ wheels = [
 ]
 
 [[package]]
+name = "inductive-mlxrl"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "mlx" },
+    { name = "mlx-lm" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "mlx-lm-lora" },
+    { name = "mlx-tune" },
+    { name = "pyright" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mlx", specifier = ">=0.31.0" },
+    { name = "mlx-lm", specifier = ">=0.31.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mlx-lm-lora", specifier = ">=2.1.0" },
+    { name = "mlx-tune", specifier = ">=0.5.1" },
+    { name = "pyright", specifier = ">=1.1.390" },
+    { name = "pytest", specifier = ">=8.3.0" },
+    { name = "ruff", specifier = ">=0.8.0" },
+]
+
+[[package]]
 name = "iniconfig"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -992,39 +1025,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a3/60/e774080c90dd5a9d6ed51e3ff1c145243199048714bbca61cdf65e278a69/mlx_vlm-0.6.3.tar.gz", hash = "sha256:f5541eb7c22345a951f7fb78376ed80e8e42bd7c179fb0daa40a21592c7b2adb", size = 1360405, upload-time = "2026-06-10T18:06:34.457Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/95/47/196df650f46f046060c695c3b2378e09afdbe132abfbff7d6fce076b4968/mlx_vlm-0.6.3-py3-none-any.whl", hash = "sha256:27cf5afcaceb1bf7fb66e9a21f8d7344b1ac3964ff8908a5318fe5191dab7ff6", size = 1624640, upload-time = "2026-06-10T18:06:32.799Z" },
-]
-
-[[package]]
-name = "mlxrl"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "mlx" },
-    { name = "mlx-lm" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "mlx-lm-lora" },
-    { name = "mlx-tune" },
-    { name = "pyright" },
-    { name = "pytest" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "mlx", specifier = ">=0.31.0" },
-    { name = "mlx-lm", specifier = ">=0.31.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mlx-lm-lora", specifier = ">=2.1.0" },
-    { name = "mlx-tune", specifier = ">=0.5.1" },
-    { name = "pyright", specifier = ">=1.1.390" },
-    { name = "pytest", specifier = ">=8.3.0" },
-    { name = "ruff", specifier = ">=0.8.0" },
 ]
 
 [[package]]

@@ -52,7 +52,19 @@ UV_CACHE_DIR=.uv-cache uv run mlxrl train \
 
 ## Install
 
-Source install is the supported path for now:
+After the first tagged release, install the PyPI distribution:
+
+```bash
+pip install inductive-mlxrl
+```
+
+The Python import package and CLI command are still `mlxrl`:
+
+```bash
+mlxrl --help
+```
+
+Source installs are also supported:
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv sync --all-groups
@@ -67,8 +79,8 @@ UV_CACHE_DIR=.uv-cache uv run mlxrl --help
 Python 3.11+ is required. Runtime dependencies are intentionally small:
 `mlx` and `mlx-lm`. Development dependencies include `pytest`, `ruff`,
 `pyright`, `mlx-tune`, and `mlx-lm-lora` for comparison benchmarks.
-Packaging metadata is present for future PyPI publishing, but no PyPI release
-has been cut from this repo yet.
+The PyPI distribution name is `inductive-mlxrl`; the import package and console
+script remain `mlxrl`.
 
 ## Quick Smoke Tests
 
