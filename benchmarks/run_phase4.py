@@ -1,6 +1,10 @@
 #!/usr/bin/env python
 """Phase 4 benchmark harness for mlxrl and MLX baselines.
 
+Attribution: calls MLX-LM generation APIs for gen-only baselines and provides
+command adapters for mlx-tune and mlx-lm-lora benchmark integration. No
+third-party benchmark implementation code is vendored here.
+
 Rollout tok/s is defined once for every target: generated completion tokens
 only, excluding prompt/prefix tokens and warmup/failed steps, divided by the
 wall-clock seconds spent in the generation phase.

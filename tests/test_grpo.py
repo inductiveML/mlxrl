@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 
 import mlx.core as mx
+import pytest
 
 from mlxrl.algo.grpo import (
     DAPOAlgorithm,
@@ -14,6 +15,8 @@ from mlxrl.algo.grpo import (
     group_normalize_rewards,
     grpo_loss,
 )
+
+pytestmark = pytest.mark.metal
 
 
 def test_group_normalize_rewards_two_item_group() -> None:

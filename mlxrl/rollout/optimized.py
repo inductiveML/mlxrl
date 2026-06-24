@@ -1,4 +1,8 @@
-"""Optimized rollout variants with strict equivalence to the naive path."""
+"""Optimized rollout variants with strict equivalence to the naive path.
+
+Attribution: adapts MLX-LM KV-cache state conventions and sampling filters from
+`mlx_lm.models.cache` and `mlx_lm.sample_utils` (MIT, Copyright Apple Inc.).
+"""
 
 from __future__ import annotations
 

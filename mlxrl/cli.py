@@ -467,7 +467,9 @@ def _phase_train(args: argparse.Namespace) -> int:
         estimate = memory_fit(config, available_memory_gb)
         print(
             f"memory_estimated_peak_gb: {estimate.estimated_peak_gb:.3f} "
-            f"available_gb: {estimate.available_gb:.3f} fits: {estimate.fits}"
+            f"available_gb: {estimate.available_gb:.3f} "
+            f"confidence: {estimate.display_label()} "
+            f"fits: {estimate.fits}"
         )
         if not estimate.fits:
             print(f"memory_warning: {estimate.warning}")

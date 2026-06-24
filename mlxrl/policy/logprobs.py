@@ -1,4 +1,8 @@
-"""Policy and reference logprob passes for generated completions."""
+"""Policy and reference logprob passes for generated completions.
+
+Attribution: uses MLX-LM prompt-cache construction and LoRA adapter classes from
+`mlx_lm.models.cache` and `mlx_lm.tuner.lora` (MIT, Copyright Apple Inc.).
+"""
 
 from __future__ import annotations
 

@@ -1,0 +1,56 @@
+name: Bug report
+description: Report a reproducible mlxrl bug
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Paste the smallest command or script that reproduces the issue.
+      render: bash
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "15.5"
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Apple Silicon hardware
+      placeholder: "M4 Max, 48 GB unified memory"
+    validations:
+      required: true
+  - type: input
+    id: mlx
+    attributes:
+      label: MLX / MLX-LM versions
+      placeholder: "mlx 0.31.2, mlx-lm 0.31.3"
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Training config
+      description: Include model id, G, prompt length, max completion length, checkpointing, beta, and algorithm.
+      render: toml
+    validations:
+      required: true
+  - type: textarea
+    id: memory
+    attributes:
+      label: Memory information
+      description: Include peak MLX memory, wired limit, and whether the run OOMed or was killed.
+    validations:
+      required: false

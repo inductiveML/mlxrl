@@ -4,6 +4,7 @@ from collections.abc import Sequence
 
 import mlx.core as mx
 import mlx.nn as nn
+import pytest
 
 from mlxrl.algo.grpo import GRPOAlgorithm
 from mlxrl.policy.logprobs import (
@@ -14,6 +15,8 @@ from mlxrl.policy.logprobs import (
 from mlxrl.rollout.naive import Completion, SamplingConfig
 from mlxrl.rollout.optimized import generate_from_prefix_cache, prefill_prompt_once
 from mlxrl.train.grpo import batch_from_rollouts, old_policy_logprobs_from_rollouts
+
+pytestmark = pytest.mark.metal
 
 
 class ToyCache:

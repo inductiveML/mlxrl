@@ -1,0 +1,39 @@
+name: Feature request
+description: Propose a scoped mlxrl feature
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow or correctness gap does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Describe the smallest useful change.
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope fit
+      description: How does this fit mlxrl's critic-free, on-policy rollout scope?
+      options:
+        - Critic-free on-policy RL algorithm
+        - Rollout/logprob/training performance
+        - Memory or Apple Silicon runtime support
+        - Docs, tests, benchmarks, packaging
+        - Unsure
+    validations:
+      required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: Note if this would require a critic, offline preference data, CUDA/torch, distributed training, or a second model copy.
+    validations:
+      required: false

@@ -1,5 +1,8 @@
 # mlxrl
 
+Fast on-policy MLX RL for Apple Silicon; not a general RL framework, not
+preference tuning, and not distributed training.
+
 `mlxrl` is a small, single-process RL post-training library for LLMs on Apple
 Silicon. It is built around one idea: GRPO on MLX should be a fast batched
 rollout path with a thin loss and optimizer step on top, not a framework.
@@ -7,6 +10,29 @@ rollout path with a thin loss and optimizer step on top, not a framework.
 The current implementation targets QLoRA GRPO on local 4-bit MLX models. It
 reuses `mlx-lm` model loading, LoRA layers, KV caches, and sampling utilities,
 and keeps generation and training in one Python process with one model object.
+
+`mlxrl` is pre-1.0. The correctness gates are stable, but import APIs and config
+fields may change before a 1.0 release.
+
+## Quickstart
+
+```bash
+git clone https://github.com/inductiveML/mlxrl.git
+cd mlxrl
+UV_CACHE_DIR=.uv-cache uv sync --all-groups
+UV_CACHE_DIR=.uv-cache uv run mlxrl train \
+  --config examples/qwen3_0_6b_grpo.toml \
+  --available-memory-gb 48
+```
+
+For the measured 9B-on-48GB shape, use the checkpointed G=2 config:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run mlxrl train \
+  --config examples/qwen35_9b_g2_checkpoint.toml \
+  --available-memory-gb 48 \
+  --dry-run
+```
 
 ## What Works
 
@@ -26,7 +52,7 @@ and keeps generation and training in one Python process with one model object.
 
 ## Install
 
-Use `uv` from the repository root:
+Source install is the supported path for now:
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv sync --all-groups
@@ -41,6 +67,8 @@ UV_CACHE_DIR=.uv-cache uv run mlxrl --help
 Python 3.11+ is required. Runtime dependencies are intentionally small:
 `mlx` and `mlx-lm`. Development dependencies include `pytest`, `ruff`,
 `pyright`, `mlx-tune`, and `mlx-lm-lora` for comparison benchmarks.
+Packaging metadata is present for future PyPI publishing, but no PyPI release
+has been cut from this repo yet.
 
 ## Quick Smoke Tests
 
@@ -150,15 +178,18 @@ One optimizer step:
 ```python
 import mlx.optimizers as optim
 
+from mlxrl.algo import GRPOAlgorithm
 from mlxrl.train import batch_from_rollouts, optimizer_step
 
 optimizer = optim.Adam(learning_rate=1e-5)
+algorithm = GRPOAlgorithm()
 batch = batch_from_rollouts(
     model=model,
     completions=completions,
     rewards=rewards,
     group_size=4,
     pad_token_id=pad_token_id,
+    algorithm=algorithm,
     compute_reference=beta != 0.0,
 )
 metrics = optimizer_step(
@@ -167,6 +198,7 @@ metrics = optimizer_step(
     batch=batch,
     beta=beta,
     pad_token_id=pad_token_id,
+    algorithm=algorithm,
     use_checkpoint=True,
     micro_batch_size=2,
 )
@@ -253,9 +285,12 @@ MLX-LM 0.31.3, `mlx-community/Qwen3-0.6B-4bit`, 100 measured steps with
 | `mlx-lm-lora` | package-speed reference | 557.9 | 0.592 | 1.648 | 0.412 | 5.32 |
 
 `mlx-lm-lora` reports higher raw package-speed throughput in this snapshot, but
-its GRPO step does not match `mlxrl`'s current live old-policy/reference
-semantics. The apples-to-apples comparison label is intentionally reserved for
-`mlxrl`'s own semantic path.
+its benchmarked path is not the same training problem as `mlxrl`'s live
+old-policy/reference semantics and completion-loss masking. That is the honest
+case where `mlxrl` is not faster; the apples-to-apples comparison label is
+reserved for `mlxrl`'s own semantic path. On the 9B Noether real workload, the
+checkpointed MLX path measured about 6x faster than the previous torch-MPS path;
+that workload is separate from the public Phase 4 package-speed harness.
 
 Run the Phase 4 harness:
 
@@ -279,6 +314,9 @@ external package targets are useful speed references but may not match `mlxrl`
 training semantics.
 
 ## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [DESIGN.md](DESIGN.md) before adding
+algorithms or changing rollout/logprob semantics.
 
 Run the quality gates:
 

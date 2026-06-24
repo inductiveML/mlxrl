@@ -19,6 +19,8 @@ from mlxrl.policy.model import (
     strict_lora_config,
 )
 
+pytestmark = pytest.mark.metal
+
 
 class ToyDenseAttention(nn.Module):
     def __init__(self) -> None:

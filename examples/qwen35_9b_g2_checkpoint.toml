@@ -1,0 +1,29 @@
+model_id = "mlx-community/Qwen3.5-9B-MLX-4bit"
+quant_bits = 4
+group_size = 2
+max_prompt_len = 97
+max_completion_len = 512
+steps = 1
+seed = 7
+kl_beta = 0.0
+rank = 16
+scale = 2.0
+dropout = 0.0
+gradient_checkpointing = true
+checkpoint_granularity = "per-layer"
+iogpu_wired_limit_mb = 49152
+micro_batch_size = 0
+output = "/tmp/mlxrl_qwen35_9b_g2_checkpoint.npz"
+
+[optimizer]
+name = "adam"
+learning_rate = 0.00001
+
+[sampling]
+temperature = 0.7
+top_p = 0.95
+min_p = 0.0
+top_k = 0
+
+[algorithm]
+name = "grpo"

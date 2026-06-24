@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux-cpu:
+    name: Linux CPU-safe checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Ruff
+        run: uv run --no-project --with ruff ruff check .
+
+      - name: Pytest CPU-safe subset
+        run: >
+          uv run --no-project --with pytest
+          pytest
+          tests/test_benchmark_metrics.py
+          tests/test_config.py
+          tests/test_import_direction.py
+          tests/test_rewards.py
+
+      - name: Pyright CPU-safe subset
+        run: >
+          uv run --no-project --with pyright
+          pyright
+          mlxrl/config.py
+          tests/test_config.py
+          tests/test_import_direction.py
+          tests/test_rewards.py

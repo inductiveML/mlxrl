@@ -1,4 +1,8 @@
-"""Naive one-sequence-at-a-time group rollouts using MLX-LM cache and sampling."""
+"""Naive one-sequence-at-a-time group rollouts using MLX-LM cache and sampling.
+
+Attribution: uses MLX-LM cache construction and sampler APIs from
+`mlx_lm.models.cache` and `mlx_lm.sample_utils` (MIT, Copyright Apple Inc.).
+"""
 
 from __future__ import annotations
 

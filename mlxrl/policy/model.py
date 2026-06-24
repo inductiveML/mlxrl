@@ -1,4 +1,8 @@
-"""Model loading and QLoRA adapter setup for the Phase 0 gate."""
+"""Model loading and QLoRA adapter setup for the Phase 0 gate.
+
+Attribution: uses MLX-LM loading, LoRA injection, parameter counting, and
+per-layer checkpoint helpers (MIT, Copyright Apple Inc.).
+"""
 
 from __future__ import annotations
 

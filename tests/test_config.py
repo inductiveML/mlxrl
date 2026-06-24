@@ -62,6 +62,9 @@ def test_memory_fit_flags_large_9b_config_and_suggests_fallback() -> None:
     assert estimate.suggested_config.gradient_checkpointing
     assert estimate.suggested_config.group_size == 4
     assert estimate.suggested_config.max_completion_len == 512
+    assert estimate.confidence == "estimated — OOM risk, not measured"
+    assert estimate.reduction_hint == "enable gradient_checkpointing"
+    assert "OOM risk" in estimate.display_label()
     assert "enable gradient_checkpointing" in estimate.suggestions
 
 

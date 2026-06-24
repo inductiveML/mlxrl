@@ -1,5 +1,9 @@
 #!/usr/bin/env python
-"""Audit Phase 4 benchmark configs and fast-path availability."""
+"""Audit Phase 4 benchmark configs and fast-path availability.
+
+Attribution: inspects installed mlx-tune and mlx-lm-lora sources to classify
+benchmark comparability. No third-party implementation code is vendored here.
+"""
 
 from __future__ import annotations
 

@@ -4,6 +4,17 @@ version = "0.1.0"
 description = "Small single-process RL post-training for LLMs on Apple Silicon with MLX."
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_LICENSES.md"]
+keywords = ["mlx", "rl", "grpo", "qlora", "apple-silicon"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "mlx>=0.31.0",
     "mlx-lm>=0.31.0",
@@ -42,3 +53,8 @@ pythonVersion = "3.11"
 typeCheckingMode = "basic"
 reportMissingTypeStubs = "none"
 include = ["mlxrl", "tests"]
+
+[tool.pytest.ini_options]
+markers = [
+    "metal: requires Apple MLX/Metal runtime and is skipped by Linux CI",
+]

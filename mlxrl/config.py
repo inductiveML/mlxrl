@@ -172,6 +172,8 @@ class MemoryEstimate:
     suggested_config: TrainConfig
     suggested_peak_gb: float
     suggestions: tuple[str, ...]
+    confidence: str
+    reduction_hint: str | None = None
 
     @property
     def warning(self) -> str | None:
@@ -179,9 +181,16 @@ class MemoryEstimate:
             return None
         return (
             f"estimated peak {self.estimated_peak_gb:.1f} GB exceeds available "
-            f"{self.available_gb:.1f} GB; suggested fallback estimates "
+            f"{self.available_gb:.1f} GB ({self.confidence}); suggested fallback estimates "
             f"{self.suggested_peak_gb:.1f} GB"
         )
+
+    def display_label(self) -> str:
+        """User-facing confidence label for CLI output."""
+
+        if self.reduction_hint is None:
+            return self.confidence
+        return f"{self.confidence}; reduce: {self.reduction_hint}"
 
 
 def normalize_algorithm_name(name: str) -> str:
@@ -235,6 +244,47 @@ def estimate_peak_memory_gb(config: TrainConfig) -> float:
     return float(peak)
 
 
+def memory_confidence(config: TrainConfig) -> str:
+    """Describe whether the memory estimate is anchored or extrapolated."""
+
+    if _near_measured_anchor(config):
+        return "measured-anchor"
+    if _is_qwen35_9b_hybrid(config.model_id) and not config.gradient_checkpointing:
+        return "estimated — OOM risk, not measured"
+    return "estimated"
+
+
+def memory_reduction_hint(config: TrainConfig) -> str | None:
+    """Return the first knob to reduce when memory is likely too high."""
+
+    if _is_qwen35_9b_hybrid(config.model_id) and not config.gradient_checkpointing:
+        return "enable gradient_checkpointing"
+    if config.group_size > 1:
+        return "reduce group_size"
+    if config.max_completion_len > 32:
+        return "reduce max_completion_len"
+    return None
+
+
+def _near_measured_anchor(config: TrainConfig) -> bool:
+    sequence_len = effective_sequence_length(config)
+    if (
+        config.model_id == "mlx-community/Qwen3-0.6B-4bit"
+        and config.group_size == 4
+        and 200 <= config.max_completion_len <= 320
+    ):
+        return True
+    if _is_qwen35_9b_hybrid(config.model_id):
+        if config.gradient_checkpointing and config.group_size in {2, 4}:
+            return 560 <= sequence_len <= 660
+        return (
+            not config.gradient_checkpointing
+            and config.group_size == 2
+            and 96 <= sequence_len <= 160
+        )
+    return False
+
+
 def _is_qwen35_9b_hybrid(model_id: str) -> bool:
     normalized = model_id.lower()
     return "qwen3.5" in normalized and "9b" in normalized
@@ -270,6 +320,8 @@ def memory_fit(config: TrainConfig, available_unified_memory_gb: float) -> Memor
     if available_unified_memory_gb <= 0:
         raise ConfigError("available_unified_memory_gb must be positive.")
     estimate = estimate_peak_memory_gb(config)
+    confidence = memory_confidence(config)
+    reduction_hint = memory_reduction_hint(config)
     if estimate <= available_unified_memory_gb:
         return MemoryEstimate(
             estimated_peak_gb=estimate,
@@ -278,6 +330,8 @@ def memory_fit(config: TrainConfig, available_unified_memory_gb: float) -> Memor
             suggested_config=config,
             suggested_peak_gb=estimate,
             suggestions=(),
+            confidence=confidence,
+            reduction_hint=reduction_hint,
         )
 
     candidates: list[tuple[float, int, int, bool, TrainConfig]] = []
@@ -326,4 +380,6 @@ def memory_fit(config: TrainConfig, available_unified_memory_gb: float) -> Memor
         suggested_config=candidate,
         suggested_peak_gb=suggested_peak,
         suggestions=tuple(suggestions),
+        confidence=confidence,
+        reduction_hint=reduction_hint,
     )

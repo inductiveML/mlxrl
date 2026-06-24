@@ -1,5 +1,9 @@
 #!/usr/bin/env python
-"""External Phase 4 baseline workers for installed MLX RL packages."""
+"""External Phase 4 baseline workers for installed MLX RL packages.
+
+Attribution: calls public mlx-tune and mlx-lm-lora APIs as benchmark baselines.
+No third-party implementation code is vendored here.
+"""
 
 from __future__ import annotations
 

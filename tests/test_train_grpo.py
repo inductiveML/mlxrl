@@ -11,6 +11,8 @@ from mlx.utils import tree_flatten
 from mlxrl.algo.grpo import DAPOAlgorithm, GRPOAlgorithm, GSPOAlgorithm
 from mlxrl.train.grpo import GRPOBatch, optimizer_step
 
+pytestmark = pytest.mark.metal
+
 
 class TinyPolicy(nn.Module):
     def __init__(self) -> None:

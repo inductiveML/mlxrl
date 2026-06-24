@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import mlx.core as mx
+import pytest
 
 from mlxrl.rollout.optimized import (
     FixedKVCache,
     _completion_major_draw_keys,
     _set_random_state,
 )
+
+pytestmark = pytest.mark.metal
 
 
 def test_completion_major_draw_keys_match_mlx_global_stream() -> None:
