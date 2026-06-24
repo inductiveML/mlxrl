@@ -14,6 +14,7 @@ and keeps generation and training in one Python process with one model object.
 - Full-forward old-policy logprob recompute for training-time `pi_old`.
 - Adapter-disabled reference policy on the same model object.
 - GRPO, Dr. GRPO, DAPO, and GSPO loss variants.
+- RLOO (REINFORCE Leave-One-Out) as a critic-free rollout objective.
 - QLoRA injection on dense and heterogeneous/hybrid layer stacks.
 - Qwen3.5-style hybrid support via MLX-LM auto LoRA targeting, including
   DeltaNet `linear_attn.in_proj_*` and dense attention `q/k/v/o_proj`.
@@ -82,6 +83,20 @@ UV_CACHE_DIR=.uv-cache uv run mlxrl phase1-gsm8k \
   --group-size 4 \
   --max-tokens 64
 ```
+
+Config-driven run:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run mlxrl train \
+  --config examples/qwen3_0_6b_grpo.toml \
+  --available-memory-gb 48
+```
+
+The config schema validates model id, quant bits, group size, completion/prompt
+lengths, checkpointing granularity, `iogpu.wired_limit_mb`, optimizer settings,
+algorithm hyperparameters, KL beta, and seed before a model is loaded. CLI
+overrides such as `--steps`, `--group-size`, `--max-tokens`, `--algorithm`,
+`--beta`, and `--seed` apply on top of the file.
 
 For DeltaNet / linear-attention models, enable per-layer checkpointing:
 
@@ -159,8 +174,8 @@ metrics = optimizer_step(
 
 `micro_batch_size=0` keeps the original whole-batch path. Micro-batching is
 currently exact for token-mean policy losses: base GRPO, DAPO, GSPO token mode,
-and Dr. GRPO with `loss_reduction="token_mean"`. Sequence-reduced losses should
-keep `micro_batch_size=0`.
+RLOO, and Dr. GRPO with `loss_reduction="token_mean"`. Sequence-reduced losses
+should keep `micro_batch_size=0`.
 
 ## Policy Semantics
 
@@ -174,6 +189,42 @@ keep `micro_batch_size=0`.
   models, so recompute remains the default training semantics.
 - When `beta == 0`, the reference forward is skipped and the policy logprobs are
   used as a zero-KL placeholder.
+- PPO, DPO, and ORPO are intentionally out of scope. PPO needs a separate critic
+  and value forward; DPO/ORPO are offline preference objectives with no rollout
+  phase. `mlxrl` is critic-free, on-policy, and rollout-based by design.
+
+## Algorithms
+
+Concrete algorithms implement the small `Algorithm` protocol: compute
+advantages, optionally filter a prepared batch, then compute a loss from policy,
+old-policy, and reference logprobs. `rollout/`, `policy/`, and `train/` do not
+import concrete algorithm implementations.
+
+| algorithm | defining behavior |
+| --- | --- |
+| GRPO | group-normalized rewards, token-level importance ratio |
+| Dr. GRPO | centered or normalized rewards with decoupled length reduction |
+| DAPO | asymmetric low/high clipping plus optional dynamic zero-advantage group filtering |
+| GSPO | sequence-level, length-normalized importance ratio and clipping |
+| RLOO | leave-one-out group baseline, no critic, no std-normalized advantage |
+
+## Memory Preflight
+
+`mlxrl train` can estimate memory before loading the model:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run mlxrl train \
+  --config examples/qwen3_0_6b_grpo.toml \
+  --available-memory-gb 48 \
+  --dry-run
+```
+
+The estimator is calibrated to the local anchors we have measured: about
+`6.2 GB` for Qwen3-0.6B/G4/T256, and about `26 GB` for the fitting
+Qwen3.5-9B/G2/T609/per-layer-checkpointed case. It is a preflight guide, not a
+guarantee. For an obviously too-large Qwen3.5-9B/G8/T512/no-checkpoint config
+on 48 GB, it flags the run and suggests a fitting fallback around
+G4/T512/checkpointed.
 
 ## Benchmarks
 

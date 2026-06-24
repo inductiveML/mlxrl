@@ -8,6 +8,7 @@ from mlxrl.algo.grpo import (
     DAPOAlgorithm,
     DrGRPOAlgorithm,
     GSPOAlgorithm,
+    RLOOAlgorithm,
     approximate_kl,
     group_center_rewards,
     group_normalize_rewards,
@@ -153,6 +154,37 @@ def test_phase3_variants_reduce_to_base_grpo_under_configs() -> None:
         assert abs(float(loss.item()) - float(base.loss.item())) < 1e-6
 
 
+def test_dapo_loss_and_gradient_match_hand_computed_clipped_example() -> None:
+    old_policy = mx.zeros((2, 2), dtype=mx.float32)
+    ratios = mx.array([[1.1, 1.5], [0.95, 0.5]], dtype=mx.float32)
+    policy = mx.log(ratios)
+    advantages = mx.array([1.0, -1.0], dtype=mx.float32)
+    algorithm = DAPOAlgorithm(clip_low=0.2, clip_high=0.2)
+
+    def loss_fn(policy_logprobs: mx.array) -> mx.array:
+        return algorithm.compute_loss(
+            policy_logprobs=policy_logprobs,
+            old_policy_logprobs=old_policy,
+            reference_logprobs=policy_logprobs,
+            advantages=advantages,
+            completion_mask=mx.ones_like(policy_logprobs),
+            beta=0.0,
+        ).loss
+
+    loss = loss_fn(policy)
+    gradient = mx.grad(loss_fn)(policy)
+    expected_loss = (-1.1 - 1.2 + 0.95 + 0.8) / 4.0
+    expected_gradient = mx.array([[-1.1, 0.0], [0.95, 0.0]], dtype=mx.float32) / 4.0
+    max_gradient_error = mx.max(mx.abs(gradient - expected_gradient))
+    mx.eval(  # Test sync: materialize DAPO toy loss and gradient.
+        loss,
+        max_gradient_error,
+    )
+
+    assert abs(float(loss.item()) - expected_loss) < 1e-6
+    assert float(max_gradient_error.item()) < 1e-6
+
+
 def test_gspo_sequence_ratio_uses_length_normalized_log_likelihood() -> None:
     policy = mx.log(mx.array([[0.20, 0.50], [0.40, 0.25]], dtype=mx.float32))
     old_policy = mx.log(mx.array([[0.10, 0.25], [0.20, 0.50]], dtype=mx.float32))
@@ -172,6 +204,78 @@ def test_gspo_sequence_ratio_uses_length_normalized_log_likelihood() -> None:
 
     assert abs(float(metrics.mean_ratio.item()) - 1.5) < 1e-6
     assert abs(float(metrics.loss.item()) - 0.5) < 1e-6
+
+
+def test_gspo_sequence_loss_and_gradient_match_hand_computed_example() -> None:
+    old_policy = mx.zeros((2, 2), dtype=mx.float32)
+    policy = mx.log(mx.array([[2.0, 2.0], [2.0, 0.5]], dtype=mx.float32))
+    advantages = mx.array([-1.0, 1.0], dtype=mx.float32)
+    algorithm = GSPOAlgorithm(importance="sequence", clip_low=None, clip_high=None)
+
+    def loss_fn(policy_logprobs: mx.array) -> mx.array:
+        return algorithm.compute_loss(
+            policy_logprobs=policy_logprobs,
+            old_policy_logprobs=old_policy,
+            reference_logprobs=policy_logprobs,
+            advantages=advantages,
+            completion_mask=mx.ones_like(policy_logprobs),
+            beta=0.0,
+        ).loss
+
+    loss = loss_fn(policy)
+    gradient = mx.grad(loss_fn)(policy)
+    expected_gradient = mx.array([[0.5, 0.5], [-0.25, -0.25]], dtype=mx.float32)
+    max_gradient_error = mx.max(mx.abs(gradient - expected_gradient))
+    mx.eval(  # Test sync: materialize GSPO toy loss and sequence-ratio gradient.
+        loss,
+        max_gradient_error,
+    )
+
+    assert abs(float(loss.item()) - 0.5) < 1e-6
+    assert float(max_gradient_error.item()) < 1e-6
+
+
+def test_rloo_advantage_loss_and_gradient_match_hand_computed_example() -> None:
+    rewards = mx.array([1.0, 2.0, 4.0], dtype=mx.float32)
+    policy = mx.log(
+        mx.array([[0.50, 0.25], [0.20, 0.10], [0.40, 0.20]], dtype=mx.float32)
+    )
+    algorithm = RLOOAlgorithm()
+    advantages = algorithm.compute_advantages(rewards, group_structure=3)
+    expected_advantages = mx.array([-2.0, -0.5, 2.5], dtype=mx.float32)
+
+    def loss_fn(policy_logprobs: mx.array) -> mx.array:
+        return algorithm.compute_loss(
+            policy_logprobs=policy_logprobs,
+            old_policy_logprobs=policy_logprobs,
+            reference_logprobs=policy_logprobs,
+            advantages=advantages,
+            completion_mask=mx.ones_like(policy_logprobs),
+            beta=0.0,
+        ).loss
+
+    loss = loss_fn(policy)
+    gradient = mx.grad(loss_fn)(policy)
+    expected_loss = -(
+        math.log(0.50) * -2.0
+        + math.log(0.25) * -2.0
+        + math.log(0.20) * -0.5
+        + math.log(0.10) * -0.5
+        + math.log(0.40) * 2.5
+        + math.log(0.20) * 2.5
+    ) / 6.0
+    expected_gradient = -expected_advantages[:, None] / 6.0
+    max_advantage_error = mx.max(mx.abs(advantages - expected_advantages))
+    max_gradient_error = mx.max(mx.abs(gradient - expected_gradient))
+    mx.eval(  # Test sync: materialize RLOO toy advantage/loss/gradient.
+        loss,
+        max_advantage_error,
+        max_gradient_error,
+    )
+
+    assert float(max_advantage_error.item()) == 0.0
+    assert abs(float(loss.item()) - expected_loss) < 1e-6
+    assert float(max_gradient_error.item()) < 1e-6
 
 
 def test_approximate_kl_is_zero_when_policies_match() -> None:

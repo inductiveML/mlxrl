@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -16,10 +17,17 @@ from mlxrl.algo.grpo import (
     DrGRPOAlgorithm,
     GRPOAlgorithm,
     GSPOAlgorithm,
-    PolicyAlgorithm,
+    RLOOAlgorithm,
     approximate_kl,
     group_normalize_rewards,
     grpo_loss,
+)
+from mlxrl.algorithm import Algorithm
+from mlxrl.config import (
+    ConfigError,
+    TrainConfig,
+    memory_fit,
+    normalize_algorithm_name,
 )
 from mlxrl.data.gsm8k import (
     MINI_GSM8K,
@@ -141,7 +149,7 @@ def _clip_value(raw: str, default: float) -> float | None:
     return float(raw)
 
 
-def _algorithm_from_args(args: argparse.Namespace) -> PolicyAlgorithm:
+def _algorithm_from_args(args: argparse.Namespace) -> Algorithm:
     name = args.algorithm.lower().replace("_", "-")
     if name == "grpo":
         return GRPOAlgorithm()
@@ -155,6 +163,7 @@ def _algorithm_from_args(args: argparse.Namespace) -> PolicyAlgorithm:
         return DAPOAlgorithm(
             clip_low=_clip_value(args.clip_low, 0.2),
             clip_high=_clip_value(args.clip_high, 0.28),
+            dynamic_sampling=args.dapo_dynamic_sampling,
         )
     if name == "gspo":
         return GSPOAlgorithm(
@@ -162,7 +171,37 @@ def _algorithm_from_args(args: argparse.Namespace) -> PolicyAlgorithm:
             clip_low=_clip_value(args.clip_low, 3e-4),
             clip_high=_clip_value(args.clip_high, 4e-4),
         )
+    if name == "rloo":
+        return RLOOAlgorithm()
     raise ValueError(f"Unknown algorithm {args.algorithm!r}.")
+
+
+def _algorithm_from_config(config: TrainConfig) -> Algorithm:
+    algorithm = config.algorithm
+    name = normalize_algorithm_name(algorithm.name)
+    if name == "grpo":
+        return GRPOAlgorithm()
+    if name == "dr-grpo":
+        return DrGRPOAlgorithm(
+            normalize_rewards=algorithm.drgrpo_normalize_rewards,
+            loss_reduction=algorithm.drgrpo_loss_reduction,
+            max_tokens=algorithm.drgrpo_max_tokens or config.max_completion_len,
+        )
+    if name == "dapo":
+        return DAPOAlgorithm(
+            clip_low=algorithm.clip_low if algorithm.clip_low is not None else 0.2,
+            clip_high=algorithm.clip_high if algorithm.clip_high is not None else 0.28,
+            dynamic_sampling=algorithm.dapo_dynamic_sampling,
+        )
+    if name == "gspo":
+        return GSPOAlgorithm(
+            importance=algorithm.gspo_importance,
+            clip_low=algorithm.clip_low if algorithm.clip_low is not None else 3e-4,
+            clip_high=algorithm.clip_high if algorithm.clip_high is not None else 4e-4,
+        )
+    if name == "rloo":
+        return RLOOAlgorithm()
+    raise ValueError(f"Unknown algorithm {algorithm.name!r}.")
 
 
 def _completion_rewards(
@@ -227,6 +266,7 @@ def _build_equivalence_batch(
         rewards=rewards,
         group_size=group_size,
         pad_token_id=pad_token_id,
+        algorithm=GRPOAlgorithm(),
         use_checkpoint=use_checkpoint,
         compute_reference=beta != 0.0,
     )
@@ -235,6 +275,7 @@ def _build_equivalence_batch(
         batch,
         beta,
         pad_token_id,
+        algorithm=GRPOAlgorithm(),
         use_checkpoint=use_checkpoint,
     )
     mx.eval(  # Equivalence sync: materialize loss before Python tolerance comparison.
@@ -259,7 +300,7 @@ def _phase1_gsm8k(args: argparse.Namespace) -> int:
     optimizer = optim.Adam(learning_rate=args.learning_rate)
     pad_token_id = pad_token_id_from_tokenizer(tokenizer)
     sampling = _sampling_config(args)
-    algorithm = _algorithm_from_args(args)
+    algorithm = getattr(args, "_algorithm_override", None) or _algorithm_from_args(args)
     print(f"algorithm: {algorithm.name}")
 
     reward_history: list[float] = []
@@ -304,8 +345,9 @@ def _phase1_gsm8k(args: argparse.Namespace) -> int:
             batch=batch,
             beta=args.beta,
             pad_token_id=pad_token_id,
-            use_checkpoint=args.checkpoint_completion_forward,
             algorithm=algorithm,
+            use_checkpoint=args.checkpoint_completion_forward,
+            micro_batch_size=getattr(args, "micro_batch_size", 0),
         )
         reward_history.append(metrics.mean_reward)
         kl_history.append(metrics.kl)
@@ -359,6 +401,96 @@ def _phase1_gsm8k(args: argparse.Namespace) -> int:
     )
     print(f"reference_output: {output}")
     return 0
+
+
+def _namespace_from_train_config(config: TrainConfig) -> argparse.Namespace:
+    return argparse.Namespace(
+        model=config.model_id,
+        steps=config.steps,
+        group_size=config.group_size,
+        max_tokens=config.max_completion_len,
+        temperature=config.sampling.temperature,
+        top_p=config.sampling.top_p,
+        min_p=config.sampling.min_p,
+        top_k=config.sampling.top_k,
+        seed=config.seed,
+        beta=config.kl_beta,
+        learning_rate=config.optimizer.learning_rate,
+        rank=config.rank,
+        scale=config.scale,
+        dropout=config.dropout,
+        use_chat_template=config.use_chat_template,
+        checkpoint_completion_forward=config.gradient_checkpointing,
+        output=config.output,
+        micro_batch_size=config.micro_batch_size,
+        algorithm_config=config.algorithm,
+        algorithm=config.algorithm.name,
+    )
+
+
+def _apply_train_overrides(config: TrainConfig, args: argparse.Namespace) -> TrainConfig:
+    replacements: dict[str, Any] = {}
+    if args.model is not None:
+        replacements["model_id"] = args.model
+    if args.steps is not None:
+        replacements["steps"] = args.steps
+    if args.group_size is not None:
+        replacements["group_size"] = args.group_size
+    if args.max_tokens is not None:
+        replacements["max_completion_len"] = args.max_tokens
+    if args.beta is not None:
+        replacements["kl_beta"] = args.beta
+    if args.seed is not None:
+        replacements["seed"] = args.seed
+    if args.output is not None:
+        replacements["output"] = args.output
+    if args.algorithm is not None:
+        replacements["algorithm"] = replace(
+            config.algorithm,
+            name=args.algorithm,
+        )
+    updated = replace(config, **replacements)
+    updated.validate()
+    return updated
+
+
+def _phase_train(args: argparse.Namespace) -> int:
+    try:
+        config = _apply_train_overrides(TrainConfig.from_file(args.config), args)
+    except ConfigError as error:
+        raise SystemExit(f"Invalid config: {error}") from error
+
+    available_memory_gb = args.available_memory_gb
+    if available_memory_gb is None and config.iogpu_wired_limit_mb is not None:
+        available_memory_gb = config.iogpu_wired_limit_mb / 1024.0
+    if available_memory_gb is not None:
+        estimate = memory_fit(config, available_memory_gb)
+        print(
+            f"memory_estimated_peak_gb: {estimate.estimated_peak_gb:.3f} "
+            f"available_gb: {estimate.available_gb:.3f} fits: {estimate.fits}"
+        )
+        if not estimate.fits:
+            print(f"memory_warning: {estimate.warning}")
+            if estimate.suggestions:
+                print("memory_suggestions: " + ", ".join(estimate.suggestions))
+            if args.auto_fit:
+                config = estimate.suggested_config
+                print(
+                    f"memory_auto_fit_peak_gb: {estimate.suggested_peak_gb:.3f} "
+                    f"group_size: {config.group_size} "
+                    f"max_completion_len: {config.max_completion_len} "
+                    f"gradient_checkpointing: {config.gradient_checkpointing}"
+                )
+            elif not args.dry_run:
+                raise SystemExit("Config is predicted to exceed available memory.")
+    if args.dry_run:
+        print("config_valid: true")
+        print(f"algorithm: {normalize_algorithm_name(config.algorithm.name)}")
+        return 0
+
+    namespace = _namespace_from_train_config(config)
+    namespace._algorithm_override = _algorithm_from_config(config)
+    return _phase1_gsm8k(namespace)
 
 
 def _phase2_equivalence(args: argparse.Namespace) -> int:
@@ -524,7 +656,7 @@ def build_parser() -> argparse.ArgumentParser:
     gsm8k.add_argument("--learning-rate", type=float, default=1e-5)
     gsm8k.add_argument(
         "--algorithm",
-        choices=["grpo", "dr-grpo", "dapo", "gspo"],
+        choices=["grpo", "dr-grpo", "dapo", "gspo", "rloo"],
         default="grpo",
     )
     gsm8k.add_argument(
@@ -542,6 +674,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["sequence", "token"],
         default="sequence",
     )
+    gsm8k.add_argument("--dapo-dynamic-sampling", action="store_true")
     gsm8k.add_argument("--drgrpo-normalize-rewards", action="store_true")
     gsm8k.add_argument(
         "--drgrpo-loss-reduction",
@@ -554,8 +687,27 @@ def build_parser() -> argparse.ArgumentParser:
     gsm8k.add_argument("--dropout", type=float, default=0.0)
     gsm8k.add_argument("--use-chat-template", action="store_true")
     gsm8k.add_argument("--checkpoint-completion-forward", action="store_true")
+    gsm8k.add_argument("--micro-batch-size", type=int, default=0)
     gsm8k.add_argument("--output", default="reference_outputs/phase1_reference.npz")
     gsm8k.set_defaults(func=_phase1_gsm8k)
+
+    train = subparsers.add_parser(
+        "train",
+        help="Run config-driven GRPO-family training.",
+    )
+    train.add_argument("--config", required=True)
+    train.add_argument("--model", default=None)
+    train.add_argument("--steps", type=int, default=None)
+    train.add_argument("--group-size", type=int, default=None)
+    train.add_argument("--max-tokens", type=int, default=None)
+    train.add_argument("--algorithm", choices=["grpo", "dr-grpo", "dapo", "gspo", "rloo"])
+    train.add_argument("--beta", type=float, default=None)
+    train.add_argument("--seed", type=int, default=None)
+    train.add_argument("--output", default=None)
+    train.add_argument("--available-memory-gb", type=float, default=None)
+    train.add_argument("--auto-fit", action="store_true")
+    train.add_argument("--dry-run", action="store_true")
+    train.set_defaults(func=_phase_train)
 
     phase2 = subparsers.add_parser(
         "phase2-equivalence",

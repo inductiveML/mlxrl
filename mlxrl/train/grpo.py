@@ -11,7 +11,7 @@ import mlx.nn as nn
 import mlx.optimizers as optim
 from mlx.utils import tree_map
 
-from mlxrl.algo.grpo import AlgorithmLossMetrics, GRPOAlgorithm, PolicyAlgorithm
+from mlxrl.algorithm import Algorithm, AlgorithmLossMetrics
 from mlxrl.policy.logprobs import (
     CompletionLogprobs,
     completion_logprobs,
@@ -70,9 +70,9 @@ def batch_from_rollouts(
     rewards: Sequence[float],
     group_size: int,
     pad_token_id: int,
+    algorithm: Algorithm,
     use_checkpoint: bool = False,
     compute_reference: bool = True,
-    algorithm: PolicyAlgorithm | None = None,
 ) -> GRPOBatch:
     """Compute old policy/ref logprobs and group-normalized advantages."""
 
@@ -97,10 +97,9 @@ def batch_from_rollouts(
         dual.reference,
         dual.mask,
     )
-    active_algorithm = algorithm or GRPOAlgorithm()
     reward_array = mx.array(list(rewards), dtype=mx.float32)
-    advantages = active_algorithm.advantages(reward_array, group_size=group_size)
-    return GRPOBatch(
+    advantages = algorithm.compute_advantages(reward_array, group_structure=group_size)
+    batch = GRPOBatch(
         prompt_token_ids=prompt_token_ids,
         completion_token_ids=completion_token_ids,
         rewards=reward_array,
@@ -109,6 +108,7 @@ def batch_from_rollouts(
         reference_logprobs=mx.stop_gradient(dual.reference),
         mask=dual.mask,
     )
+    return algorithm.filter_batch(batch, group_structure=group_size)
 
 
 def old_policy_logprobs_from_rollouts(
@@ -147,12 +147,11 @@ def grpo_metrics_from_batch(
     batch: GRPOBatch,
     beta: float,
     pad_token_id: int,
+    algorithm: Algorithm,
     use_checkpoint: bool = False,
-    algorithm: PolicyAlgorithm | None = None,
 ) -> AlgorithmLossMetrics:
     """Recompute policy logprobs and evaluate GRPO metrics."""
 
-    active_algorithm = algorithm or GRPOAlgorithm()
     if use_checkpoint:
         enable_grad_checkpointing(model)
     current = completion_logprobs(
@@ -162,27 +161,14 @@ def grpo_metrics_from_batch(
         pad_token_id,
         use_checkpoint=use_checkpoint,
     )
-    return active_algorithm.loss(
+    return algorithm.compute_loss(
         policy_logprobs=current.logprobs,
         old_policy_logprobs=batch.old_policy_logprobs,
         reference_logprobs=batch.reference_logprobs,
         advantages=batch.advantages,
-        mask=batch.mask,
+        completion_mask=batch.mask,
         beta=beta,
     )
-
-
-def _uses_token_mean_reduction(algorithm: PolicyAlgorithm) -> bool:
-    """Return whether token-count weighting composes exact micro-batch gradients."""
-
-    name = algorithm.name
-    if name in {"grpo", "dapo"}:
-        return True
-    if name == "dr-grpo":
-        return getattr(algorithm, "loss_reduction", None) == "token_mean"
-    if name == "gspo":
-        return getattr(algorithm, "importance", None) == "token"
-    return False
 
 
 def optimizer_step(
@@ -191,21 +177,20 @@ def optimizer_step(
     batch: GRPOBatch,
     beta: float,
     pad_token_id: int,
+    algorithm: Algorithm,
     use_checkpoint: bool = False,
     micro_batch_size: int = 0,
-    algorithm: PolicyAlgorithm | None = None,
 ) -> StepMetrics:
     """Run value_and_grad over currently trainable adapter parameters once."""
 
-    active_algorithm = algorithm or GRPOAlgorithm()
     if micro_batch_size < 0:
         raise ValueError("micro_batch_size must be non-negative.")
     num_completions = len(batch.completion_token_ids)
     chunked = 0 < micro_batch_size < num_completions
-    if chunked and not _uses_token_mean_reduction(active_algorithm):
+    if chunked and not algorithm.token_mean_reduction:
         raise ValueError(
             "micro_batch_size currently supports token-mean policy losses only; "
-            f"{active_algorithm.name} uses sequence-level reduction."
+            f"{algorithm.name} uses sequence-level reduction."
         )
     model.train()
 
@@ -219,7 +204,7 @@ def optimizer_step(
             beta,
             pad_token_id,
             use_checkpoint=use_checkpoint,
-            algorithm=active_algorithm,
+            algorithm=algorithm,
         )
         return metrics.loss, (
             metrics.policy_gradient_loss,

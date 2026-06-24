@@ -3,48 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any
 
 import mlx.core as mx
 
-
-@dataclass(frozen=True)
-class AlgorithmLossMetrics:
-    """Scalar diagnostics for one algorithm loss batch."""
-
-    loss: mx.array
-    policy_gradient_loss: mx.array
-    kl: mx.array
-    mean_ratio: mx.array
-    clip_fraction: mx.array
-
+from mlxrl.algorithm import AlgorithmLossMetrics, PolicyAlgorithm
 
 GRPOLossMetrics = AlgorithmLossMetrics
-
-
-class PolicyAlgorithm(Protocol):
-    """Minimal interface for a GRPO-family loss variant."""
-
-    @property
-    def name(self) -> str:
-        """Stable algorithm name for logs and outputs."""
-        ...
-
-    def advantages(self, rewards: mx.array, group_size: int) -> mx.array:
-        """Compute per-completion advantages from scalar rewards."""
-        ...
-
-    def loss(
-        self,
-        policy_logprobs: mx.array,
-        old_policy_logprobs: mx.array,
-        reference_logprobs: mx.array,
-        advantages: mx.array,
-        mask: mx.array,
-        beta: float,
-    ) -> AlgorithmLossMetrics:
-        """Compute loss and diagnostics from token logprobs."""
-        ...
 
 
 @dataclass(frozen=True)
@@ -53,16 +18,20 @@ class GRPOAlgorithm:
 
     name: str = "grpo"
 
-    def advantages(self, rewards: mx.array, group_size: int) -> mx.array:
-        return group_normalize_rewards(rewards, group_size)
+    @property
+    def token_mean_reduction(self) -> bool:
+        return True
 
-    def loss(
+    def compute_advantages(self, rewards: mx.array, group_structure: int) -> mx.array:
+        return group_normalize_rewards(rewards, group_structure)
+
+    def compute_loss(
         self,
         policy_logprobs: mx.array,
         old_policy_logprobs: mx.array,
         reference_logprobs: mx.array,
         advantages: mx.array,
-        mask: mx.array,
+        completion_mask: mx.array,
         beta: float,
     ) -> AlgorithmLossMetrics:
         ratio = token_importance_ratio(policy_logprobs, old_policy_logprobs)
@@ -72,9 +41,34 @@ class GRPOAlgorithm:
             ratio=ratio,
             policy_logprobs=policy_logprobs,
             reference_logprobs=reference_logprobs,
-            mask=mask,
+            mask=completion_mask,
             beta=beta,
         )
+
+    def advantages(self, rewards: mx.array, group_size: int) -> mx.array:
+        return self.compute_advantages(rewards, group_size)
+
+    def loss(
+        self,
+        policy_logprobs: mx.array,
+        old_policy_logprobs: mx.array,
+        reference_logprobs: mx.array,
+        advantages: mx.array,
+        mask: mx.array,
+        beta: float,
+    ) -> AlgorithmLossMetrics:
+        return self.compute_loss(
+            policy_logprobs,
+            old_policy_logprobs,
+            reference_logprobs,
+            advantages,
+            mask,
+            beta,
+        )
+
+    def filter_batch(self, batch: Any, group_structure: int) -> Any:
+        del group_structure
+        return batch
 
 
 @dataclass(frozen=True)
@@ -86,20 +80,25 @@ class DrGRPOAlgorithm:
     max_tokens: int | None = None
     name: str = "dr-grpo"
 
-    def advantages(self, rewards: mx.array, group_size: int) -> mx.array:
-        if self.normalize_rewards:
-            return group_normalize_rewards(rewards, group_size)
-        return group_center_rewards(rewards, group_size)
+    @property
+    def token_mean_reduction(self) -> bool:
+        return self.loss_reduction == "token_mean"
 
-    def loss(
+    def compute_advantages(self, rewards: mx.array, group_structure: int) -> mx.array:
+        if self.normalize_rewards:
+            return group_normalize_rewards(rewards, group_structure)
+        return group_center_rewards(rewards, group_structure)
+
+    def compute_loss(
         self,
         policy_logprobs: mx.array,
         old_policy_logprobs: mx.array,
         reference_logprobs: mx.array,
         advantages: mx.array,
-        mask: mx.array,
+        completion_mask: mx.array,
         beta: float,
     ) -> AlgorithmLossMetrics:
+        mask = completion_mask
         ratio = token_importance_ratio(policy_logprobs, old_policy_logprobs)
         token_policy_gradient = -ratio * advantages[:, None]
         token_kl = approximate_kl(policy_logprobs, reference_logprobs)
@@ -123,17 +122,8 @@ class DrGRPOAlgorithm:
             clip_fraction=mx.array(0.0, dtype=mx.float32),
         )
 
-
-@dataclass(frozen=True)
-class DAPOAlgorithm:
-    """DAPO's decoupled low/high token-ratio clipping."""
-
-    clip_low: float | None = 0.2
-    clip_high: float | None = 0.28
-    name: str = "dapo"
-
     def advantages(self, rewards: mx.array, group_size: int) -> mx.array:
-        return group_normalize_rewards(rewards, group_size)
+        return self.compute_advantages(rewards, group_size)
 
     def loss(
         self,
@@ -142,6 +132,45 @@ class DAPOAlgorithm:
         reference_logprobs: mx.array,
         advantages: mx.array,
         mask: mx.array,
+        beta: float,
+    ) -> AlgorithmLossMetrics:
+        return self.compute_loss(
+            policy_logprobs,
+            old_policy_logprobs,
+            reference_logprobs,
+            advantages,
+            mask,
+            beta,
+        )
+
+    def filter_batch(self, batch: Any, group_structure: int) -> Any:
+        del group_structure
+        return batch
+
+
+@dataclass(frozen=True)
+class DAPOAlgorithm:
+    """DAPO's decoupled low/high token-ratio clipping."""
+
+    clip_low: float | None = 0.2
+    clip_high: float | None = 0.28
+    dynamic_sampling: bool = True
+    name: str = "dapo"
+
+    @property
+    def token_mean_reduction(self) -> bool:
+        return True
+
+    def compute_advantages(self, rewards: mx.array, group_structure: int) -> mx.array:
+        return group_normalize_rewards(rewards, group_structure)
+
+    def compute_loss(
+        self,
+        policy_logprobs: mx.array,
+        old_policy_logprobs: mx.array,
+        reference_logprobs: mx.array,
+        advantages: mx.array,
+        completion_mask: mx.array,
         beta: float,
     ) -> AlgorithmLossMetrics:
         ratio = token_importance_ratio(policy_logprobs, old_policy_logprobs)
@@ -156,9 +185,35 @@ class DAPOAlgorithm:
             ratio=ratio,
             policy_logprobs=policy_logprobs,
             reference_logprobs=reference_logprobs,
-            mask=mask,
+            mask=completion_mask,
             beta=beta,
             clipped_ratio=clipped_ratio,
+        )
+
+    def filter_batch(self, batch: Any, group_structure: int) -> Any:
+        if not self.dynamic_sampling:
+            return batch
+        return filter_zero_advantage_groups(batch, group_structure)
+
+    def advantages(self, rewards: mx.array, group_size: int) -> mx.array:
+        return self.compute_advantages(rewards, group_size)
+
+    def loss(
+        self,
+        policy_logprobs: mx.array,
+        old_policy_logprobs: mx.array,
+        reference_logprobs: mx.array,
+        advantages: mx.array,
+        mask: mx.array,
+        beta: float,
+    ) -> AlgorithmLossMetrics:
+        return self.compute_loss(
+            policy_logprobs,
+            old_policy_logprobs,
+            reference_logprobs,
+            advantages,
+            mask,
+            beta,
         )
 
 
@@ -171,18 +226,23 @@ class GSPOAlgorithm:
     clip_high: float | None = 4e-4
     name: str = "gspo"
 
-    def advantages(self, rewards: mx.array, group_size: int) -> mx.array:
-        return group_normalize_rewards(rewards, group_size)
+    @property
+    def token_mean_reduction(self) -> bool:
+        return self.importance == "token"
 
-    def loss(
+    def compute_advantages(self, rewards: mx.array, group_structure: int) -> mx.array:
+        return group_normalize_rewards(rewards, group_structure)
+
+    def compute_loss(
         self,
         policy_logprobs: mx.array,
         old_policy_logprobs: mx.array,
         reference_logprobs: mx.array,
         advantages: mx.array,
-        mask: mx.array,
+        completion_mask: mx.array,
         beta: float,
     ) -> AlgorithmLossMetrics:
+        mask = completion_mask
         if self.importance == "token":
             ratio = token_importance_ratio(policy_logprobs, old_policy_logprobs)
             clipped_ratio = clip_ratio(ratio, self.clip_low, self.clip_high)
@@ -219,6 +279,96 @@ class GSPOAlgorithm:
             kl=kl,
             mean_ratio=mx.mean(sequence_ratio),
             clip_fraction=clip_fraction,
+        )
+
+    def advantages(self, rewards: mx.array, group_size: int) -> mx.array:
+        return self.compute_advantages(rewards, group_size)
+
+    def loss(
+        self,
+        policy_logprobs: mx.array,
+        old_policy_logprobs: mx.array,
+        reference_logprobs: mx.array,
+        advantages: mx.array,
+        mask: mx.array,
+        beta: float,
+    ) -> AlgorithmLossMetrics:
+        return self.compute_loss(
+            policy_logprobs,
+            old_policy_logprobs,
+            reference_logprobs,
+            advantages,
+            mask,
+            beta,
+        )
+
+    def filter_batch(self, batch: Any, group_structure: int) -> Any:
+        del group_structure
+        return batch
+
+
+@dataclass(frozen=True)
+class RLOOAlgorithm:
+    """REINFORCE Leave-One-Out with a per-sample group baseline."""
+
+    name: str = "rloo"
+
+    @property
+    def token_mean_reduction(self) -> bool:
+        return True
+
+    def compute_advantages(self, rewards: mx.array, group_structure: int) -> mx.array:
+        grouped = _grouped_rewards(rewards, group_structure)
+        if group_structure < 2:
+            raise ValueError("RLOO requires group_structure >= 2.")
+        group_sum = mx.sum(grouped, axis=1, keepdims=True)
+        baseline = (group_sum - grouped) / float(group_structure - 1)
+        return (grouped - baseline).reshape((-1,))
+
+    def compute_loss(
+        self,
+        policy_logprobs: mx.array,
+        old_policy_logprobs: mx.array,
+        reference_logprobs: mx.array,
+        advantages: mx.array,
+        completion_mask: mx.array,
+        beta: float,
+    ) -> AlgorithmLossMetrics:
+        del old_policy_logprobs
+        token_policy_gradient = -policy_logprobs * advantages[:, None]
+        ratio = mx.ones_like(policy_logprobs)
+        return _token_loss_metrics(
+            token_policy_gradient=token_policy_gradient,
+            ratio=ratio,
+            policy_logprobs=policy_logprobs,
+            reference_logprobs=reference_logprobs,
+            mask=completion_mask,
+            beta=beta,
+        )
+
+    def filter_batch(self, batch: Any, group_structure: int) -> Any:
+        del group_structure
+        return batch
+
+    def advantages(self, rewards: mx.array, group_size: int) -> mx.array:
+        return self.compute_advantages(rewards, group_size)
+
+    def loss(
+        self,
+        policy_logprobs: mx.array,
+        old_policy_logprobs: mx.array,
+        reference_logprobs: mx.array,
+        advantages: mx.array,
+        mask: mx.array,
+        beta: float,
+    ) -> AlgorithmLossMetrics:
+        return self.compute_loss(
+            policy_logprobs,
+            old_policy_logprobs,
+            reference_logprobs,
+            advantages,
+            mask,
+            beta,
         )
 
 
@@ -314,6 +464,49 @@ def masked_mean(values: mx.array, mask: mx.array) -> mx.array:
     return mx.sum(values * mask) / denominator
 
 
+def filter_zero_advantage_groups(batch: Any, group_size: int) -> Any:
+    """Drop groups whose rewards/advantages are constant across all samples."""
+
+    if group_size < 1:
+        raise ValueError("group_size must be at least 1.")
+    row_count = len(batch.completion_token_ids)
+    if row_count % group_size != 0:
+        raise ValueError(
+            f"Batch row count {row_count} must be divisible by group_size={group_size}."
+        )
+
+    mx.eval(  # Batch-filter sync: inspect group rewards/advantages on the host.
+        batch.rewards,
+        batch.advantages,
+    )
+    rewards = [float(value) for value in batch.rewards.tolist()]
+    advantages = [float(value) for value in batch.advantages.tolist()]
+    keep_indices: list[int] = []
+    for start in range(0, row_count, group_size):
+        end = start + group_size
+        reward_group = rewards[start:end]
+        advantage_group = advantages[start:end]
+        reward_span = max(reward_group) - min(reward_group)
+        advantage_span = max(advantage_group) - min(advantage_group)
+        if reward_span != 0.0 or advantage_span != 0.0:
+            keep_indices.extend(range(start, end))
+    if not keep_indices:
+        raise ValueError("DAPO dynamic sampling dropped every group.")
+
+    indices = mx.array(keep_indices, dtype=mx.int32)
+    return type(batch)(
+        prompt_token_ids=tuple(batch.prompt_token_ids[index] for index in keep_indices),
+        completion_token_ids=tuple(
+            batch.completion_token_ids[index] for index in keep_indices
+        ),
+        rewards=batch.rewards[indices],
+        advantages=batch.advantages[indices],
+        old_policy_logprobs=batch.old_policy_logprobs[indices],
+        reference_logprobs=batch.reference_logprobs[indices],
+        mask=batch.mask[indices],
+    )
+
+
 def _token_loss_metrics(
     token_policy_gradient: mx.array,
     ratio: mx.array,
@@ -370,4 +563,6 @@ def algorithm_by_name(name: str) -> PolicyAlgorithm:
         return DAPOAlgorithm()
     if normalized == "gspo":
         return GSPOAlgorithm()
+    if normalized == "rloo":
+        return RLOOAlgorithm()
     raise ValueError(f"Unknown algorithm {name!r}.")

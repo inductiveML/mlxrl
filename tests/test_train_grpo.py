@@ -8,7 +8,7 @@ import mlx.optimizers as optim
 import pytest
 from mlx.utils import tree_flatten
 
-from mlxrl.algo.grpo import GSPOAlgorithm
+from mlxrl.algo.grpo import DAPOAlgorithm, GRPOAlgorithm, GSPOAlgorithm
 from mlxrl.train.grpo import GRPOBatch, optimizer_step
 
 
@@ -62,6 +62,7 @@ def test_optimizer_step_micro_batch_matches_whole_batch_token_mean() -> None:
         batch,
         beta=0.04,
         pad_token_id=0,
+        algorithm=GRPOAlgorithm(),
         micro_batch_size=0,
     )
     micro = optimizer_step(
@@ -70,6 +71,7 @@ def test_optimizer_step_micro_batch_matches_whole_batch_token_mean() -> None:
         batch,
         beta=0.04,
         pad_token_id=0,
+        algorithm=GRPOAlgorithm(),
         micro_batch_size=2,
     )
 
@@ -105,6 +107,33 @@ def test_optimizer_step_rejects_micro_batching_for_sequence_reductions() -> None
             _batch(),
             beta=0.04,
             pad_token_id=0,
-            micro_batch_size=2,
             algorithm=GSPOAlgorithm(),
+            micro_batch_size=2,
         )
+
+
+def test_dapo_filter_batch_drops_zero_advantage_groups() -> None:
+    batch = GRPOBatch(
+        prompt_token_ids=((1,), (1,), (2,), (2,)),
+        completion_token_ids=((3,), (4,), (5,), (6,)),
+        rewards=mx.array([0.0, 0.0, 1.0, 0.0], dtype=mx.float32),
+        advantages=mx.array([0.0, 0.0, 1.0, -1.0], dtype=mx.float32),
+        old_policy_logprobs=mx.zeros((4, 1), dtype=mx.float32),
+        reference_logprobs=mx.zeros((4, 1), dtype=mx.float32),
+        mask=mx.ones((4, 1), dtype=mx.float32),
+    )
+
+    filtered = DAPOAlgorithm(dynamic_sampling=True).filter_batch(
+        batch,
+        group_structure=2,
+    )
+    mx.eval(  # Test sync: materialize DAPO filtered batch arrays.
+        filtered.rewards,
+        filtered.advantages,
+        filtered.mask,
+    )
+
+    assert filtered.prompt_token_ids == ((2,), (2,))
+    assert filtered.completion_token_ids == ((5,), (6,))
+    assert filtered.rewards.tolist() == [1.0, 0.0]
+    assert filtered.advantages.tolist() == [1.0, -1.0]

@@ -1,0 +1,30 @@
+model_id = "mlx-community/Qwen3-0.6B-4bit"
+quant_bits = 4
+group_size = 2
+max_completion_len = 4
+max_prompt_len = 4096
+steps = 1
+seed = 7
+kl_beta = 0.0
+rank = 8
+scale = 20.0
+dropout = 0.0
+gradient_checkpointing = false
+checkpoint_granularity = "per-layer"
+iogpu_wired_limit_mb = 49152
+micro_batch_size = 0
+output = "/tmp/mlxrl_config_smoke.npz"
+
+[optimizer]
+name = "adam"
+learning_rate = 0.00001
+
+[sampling]
+temperature = 0.7
+top_p = 0.95
+min_p = 0.0
+top_k = 0
+
+[algorithm]
+name = "grpo"
+

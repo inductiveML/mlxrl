@@ -5,6 +5,7 @@ from collections.abc import Sequence
 import mlx.core as mx
 import mlx.nn as nn
 
+from mlxrl.algo.grpo import GRPOAlgorithm
 from mlxrl.policy.logprobs import (
     completion_logprobs,
     dual_logprobs,
@@ -213,6 +214,7 @@ def test_batch_from_rollouts_recomputes_old_policy_logprobs() -> None:
         rewards=(1.0, 0.0),
         group_size=2,
         pad_token_id=0,
+        algorithm=GRPOAlgorithm(),
     )
     mx.eval(  # Test sync: materialize batch logprobs/mask for assertions.
         batch.old_policy_logprobs,
