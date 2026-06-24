@@ -177,6 +177,32 @@ keep `micro_batch_size=0`.
 
 ## Benchmarks
 
+Local M4 Max Phase 4 snapshot:
+
+- `454` rollout tok/s on Qwen3-0.6B GRPO with G=4 and 256-token completions.
+- `0.283` end-to-end it/s with full `mlxrl` training semantics.
+- `3.2x` faster rollout and `2.2x` higher end-to-end it/s than `mlx-tune`
+  v0.5.1 on the same run shape.
+- `1.3x` faster rollout than sequential `mlx-lm` generation at G=4.
+
+These are the two-pass means from
+`benchmarks/results/gate5_full_reconciled.md`, run with MLX 0.31.2,
+MLX-LM 0.31.3, `mlx-community/Qwen3-0.6B-4bit`, 100 measured steps with
+5 warmup steps discarded:
+
+| target | comparison | rollout tok/s | grad s/step | samples/s | it/s | peak GB |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `mlxrl` | apples-to-apples GRPO | 454.1 | 1.282 | 1.133 | 0.283 | 6.25 |
+| `mlx-lm` | generation-only, G=1 | 347.0 | - | 1.355 | - | 0.52 |
+| `mlx-lm-g4` | generation-only, sequential G=4 | 349.7 | - | 1.366 | - | 0.52 |
+| `mlx-tune` | package-speed reference | 142.2 | 0.502 | 0.519 | 0.130 | 6.16 |
+| `mlx-lm-lora` | package-speed reference | 557.9 | 0.592 | 1.648 | 0.412 | 5.32 |
+
+`mlx-lm-lora` reports higher raw package-speed throughput in this snapshot, but
+its GRPO step does not match `mlxrl`'s current live old-policy/reference
+semantics. The apples-to-apples comparison label is intentionally reserved for
+`mlxrl`'s own semantic path.
+
 Run the Phase 4 harness:
 
 ```bash
