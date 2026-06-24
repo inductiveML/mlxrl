@@ -169,9 +169,10 @@ def mlxrl_row(args: argparse.Namespace) -> ConfigAuditRow:
 
 
 def mlx_tune_row(args: argparse.Namespace, inspection: FastPathInspection) -> ConfigAuditRow:
-    version = dist_version("mlx-tune") or "-"
+    installed_version = dist_version("mlx-tune")
+    version = installed_version or "-"
     fast_path_ok = (
-        version_at_least(version, "0.5.1")
+        version_available_or_at_least(installed_version, "0.5.1")
         and inspection.mlx_tune_prefix_cache
         and inspection.mlx_tune_stream_generate
     )
@@ -211,8 +212,12 @@ def mlx_tune_row(args: argparse.Namespace, inspection: FastPathInspection) -> Co
 
 
 def mlx_lm_lora_row(args: argparse.Namespace, inspection: FastPathInspection) -> ConfigAuditRow:
-    version = dist_version("mlx-lm-lora") or "-"
-    config_ok = version_at_least(version, "2.1.0") and inspection.mlx_lm_lora_sampler_knobs
+    installed_version = dist_version("mlx-lm-lora")
+    version = installed_version or "-"
+    config_ok = (
+        version_available_or_at_least(installed_version, "2.1.0")
+        and inspection.mlx_lm_lora_sampler_knobs
+    )
     return ConfigAuditRow(
         target="mlx-lm-lora",
         status="package-speed only" if config_ok else "fail",
@@ -276,6 +281,12 @@ def common_wired_note(args: argparse.Namespace) -> str:
 
 def join_caveats(*values: str) -> str:
     return "; ".join(value for value in values if value)
+
+
+def version_available_or_at_least(version: str | None, minimum: str) -> bool:
+    if version is None:
+        return True
+    return version_at_least(version, minimum)
 
 
 def render_markdown(rows: Sequence[ConfigAuditRow]) -> str:
