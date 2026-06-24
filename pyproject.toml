@@ -1,9 +1,9 @@
 [project]
 name = "inductive-mlxrl"
-version = "0.1.1"
+version = "0.1.2"
 description = "Small single-process RL post-training for LLMs on Apple Silicon with MLX."
 readme = "README.md"
-requires-python = ">=3.11,<3.15"
+requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_LICENSES.md"]
 keywords = ["mlx", "rl", "grpo", "qlora", "apple-silicon"]
@@ -18,8 +18,8 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "mlx>=0.31.2; platform_system == 'Darwin' and platform_machine == 'arm64'",
-    "mlx-lm>=0.31.3; platform_system == 'Darwin' and platform_machine == 'arm64'",
+    "mlx>=0.31.2; python_version < '3.15' and platform_system == 'Darwin' and platform_machine == 'arm64'",
+    "mlx-lm>=0.31.3; python_version < '3.15' and platform_system == 'Darwin' and platform_machine == 'arm64'",
 ]
 
 [project.urls]

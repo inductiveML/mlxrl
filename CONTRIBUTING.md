@@ -47,9 +47,11 @@ would close this coverage gap.
 
 ## Package Compatibility
 
-The PyPI distribution supports Python 3.11 through 3.14. Keep the `mlx` and
-`mlx-lm` runtime dependencies marked for macOS arm64 so universal resolvers do
-not try to solve MLX wheels for unsupported platforms.
+The PyPI distribution requires Python 3.11+. The MLX runtime path is supported
+on Apple Silicon with Python 3.11 through 3.14. Keep the `mlx` and `mlx-lm`
+runtime dependencies marked for macOS arm64 and Python `<3.15` so universal
+resolvers do not try to solve MLX wheels for unsupported platform or Python
+splits.
 
 ## Release Cycle
 

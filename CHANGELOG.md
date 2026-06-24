@@ -5,6 +5,14 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses semantic versioning once releases are cut.
 
+## [0.1.2] - 2026-06-24
+
+### Fixed
+
+- Move the Python `<3.15` ceiling from package-level `Requires-Python` to the
+  MLX runtime dependency markers so universal resolvers can add the package to
+  projects with broad Python ranges while skipping unsupported MLX splits.
+
 ## [0.1.1] - 2026-06-24
 
 ### Fixed

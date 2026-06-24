@@ -76,10 +76,11 @@ Run commands through the local environment:
 UV_CACHE_DIR=.uv-cache uv run mlxrl --help
 ```
 
-Python 3.11 through 3.14 is supported. Runtime dependencies are intentionally
-small: `mlx` and `mlx-lm` on macOS arm64, matching the MLX wheel support window.
-Development dependencies include `pytest`, `ruff`, `pyright`, `mlx-tune`, and
-`mlx-lm-lora` for comparison benchmarks.
+Python 3.11+ is required. The MLX runtime path is supported on Apple Silicon
+with Python 3.11 through 3.14, matching the current MLX wheel support window.
+Runtime dependencies are intentionally small: `mlx` and `mlx-lm` on macOS
+arm64. Development dependencies include `pytest`, `ruff`, `pyright`,
+`mlx-tune`, and `mlx-lm-lora` for comparison benchmarks.
 The PyPI distribution name is `inductive-mlxrl`; the import package and console
 script remain `mlxrl`.
 
