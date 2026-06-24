@@ -59,5 +59,42 @@ class Algorithm(Protocol):
         return batch
 
 
-PolicyAlgorithm = Algorithm
+class TrajectoryAlgorithm(Protocol):
+    """Protocol for critic-free objectives over multi-turn trajectories."""
 
+    @property
+    def name(self) -> str:
+        """Stable algorithm name for logs and outputs."""
+        ...
+
+    @property
+    def token_mean_reduction(self) -> bool:
+        """Whether token-count weighting composes exact micro-batch gradients."""
+        ...
+
+    def compute_step_advantages(
+        self,
+        trajectories: Any,
+        group_structure: int,
+    ) -> tuple[float, ...]:
+        """Compute one advantage per trajectory step in trajectory-major order."""
+        ...
+
+    def compute_loss(
+        self,
+        policy_logprobs: mx.array,
+        old_policy_logprobs: mx.array,
+        reference_logprobs: mx.array,
+        advantages: mx.array,
+        action_mask: mx.array,
+        beta: float,
+    ) -> AlgorithmLossMetrics:
+        """Compute loss and diagnostics from action-token logprobs."""
+        ...
+
+    def filter_batch(self, batch: Any, group_structure: int) -> Any:
+        """Optionally filter a prepared trajectory batch before optimization."""
+        return batch
+
+
+PolicyAlgorithm = Algorithm

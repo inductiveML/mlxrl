@@ -20,7 +20,9 @@ estimator anchor tests are part of the contract.
 
 ## Adding An Algorithm
 
-Use `RLOOAlgorithm` in `mlxrl/algo/grpo.py` as the smallest template.
+Use `RLOOAlgorithm` in `mlxrl/algo/grpo.py` as the smallest single-turn
+template. Use `GiGPOAlgorithm` in `mlxrl/algo/gigpo.py` as the trajectory
+template.
 
 Required steps:
 
@@ -34,6 +36,23 @@ Required steps:
 
 If an algorithm needs to drop or reshape examples before the loss, use the
 `filter_batch` hook. Do not special-case it in the trainer.
+
+Trajectory algorithms implement `TrajectoryAlgorithm`, ship a hand-computed
+multi-turn loss/gradient test, and prove their reduction to an existing
+objective when a degenerate config should do so. They may consume trajectory
+metadata such as env state ids, but `rollout/`, `policy/`, and `train/` still
+must not import concrete algorithms.
+
+## Adding An Environment
+
+External envs integrate through `EnvFactory(task, seed, group_index) ->
+Environment`. Implement `reset()`, `step(action)`, `max_turns`, and
+`state_id(observation)`. The env owns the anchor-state definition; the rollout
+engine only records ids, and GiGPO groups them later.
+
+Keep envs deterministic under the provided seed when possible. Add a tiny test
+that resets, steps, returns stable state ids, and exercises truncation or
+termination. Do not add omega gym itself to this repo.
 
 ## MLX And CI
 
@@ -105,6 +124,7 @@ In scope:
 - single-process Apple Silicon RL post-training;
 - QLoRA on local MLX LLMs;
 - critic-free on-policy algorithms;
+- multi-turn agentic environments through the small env protocol;
 - memory-conscious rollout and training paths.
 
 Out of scope:

@@ -5,6 +5,27 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses semantic versioning once releases are cut.
 
+## [0.2.0] - 2026-06-24
+
+### Added
+
+- Multi-turn agentic rollout path with Gym-style `Environment` / `EnvFactory`
+  protocols and deterministic reference environments.
+- Trajectory data model with action-token spans and full-forward trajectory
+  logprob gathering for 4-bit policy, old-policy, and reference semantics.
+- GiGPO (`Group-in-Group Policy Optimization`) with episode-level and
+  anchor-state step-level advantages, plus an exact `omega=0` reduction gate.
+- Trajectory batch builder and optimizer step that preserve the existing
+  single-turn GRPO-family APIs.
+- Config-driven GiGPO training route with `max_turns`, `rollout_mode`,
+  `env_name`, `max_observation_len`, `gigpo_omega`, `gigpo_gamma`, and
+  normalization knobs.
+
+### Changed
+
+- Extend the memory estimator to label multi-turn configs as estimated
+  OOM-risk shapes while preserving the measured v0.1 single-turn anchors.
+
 ## [0.1.2] - 2026-06-24
 
 ### Fixed

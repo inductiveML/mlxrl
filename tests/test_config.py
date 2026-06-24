@@ -5,6 +5,7 @@ import pytest
 from mlxrl.config import (
     ConfigError,
     TrainConfig,
+    effective_sequence_length,
     estimate_peak_memory_gb,
     memory_fit,
     validate_output_path,
@@ -45,9 +46,56 @@ top_p = 1.0
     assert config.sampling.temperature == 0.0
 
 
+def test_train_config_loads_gigpo_multiturn_fields(tmp_path) -> None:
+    path = tmp_path / "train.toml"
+    path.write_text(
+        """
+model_id = "mlx-community/Qwen3-0.6B-4bit"
+group_size = 4
+max_completion_len = 64
+max_prompt_len = 128
+max_turns = 3
+max_observation_len = 32
+rollout_mode = "parallel_per_turn"
+env_name = "recurring-text"
+
+[algorithm]
+name = "gigpo"
+gigpo_omega = 0.5
+gigpo_gamma = 0.9
+gigpo_normalization = "center"
+""".strip()
+    )
+
+    config = TrainConfig.from_file(path)
+
+    assert config.algorithm.name == "gigpo"
+    assert config.algorithm.gigpo_omega == 0.5
+    assert config.algorithm.gigpo_gamma == 0.9
+    assert config.algorithm.gigpo_normalization == "center"
+    assert config.max_turns == 3
+    assert effective_sequence_length(config) == 128 + 3 * 64 + 2 * 32
+
+
 def test_train_config_rejects_incoherent_values() -> None:
     with pytest.raises(ConfigError, match="group_size must be at least 1"):
         TrainConfig.from_mapping({"group_size": 0})
+
+
+def test_train_config_rejects_invalid_multiturn_fields() -> None:
+    with pytest.raises(ConfigError, match="max_turns"):
+        TrainConfig.from_mapping({"max_turns": 0})
+    with pytest.raises(ConfigError, match="rollout_mode"):
+        TrainConfig.from_mapping({"rollout_mode": "batched"})
+    with pytest.raises(ConfigError, match="gigpo_normalization"):
+        TrainConfig.from_mapping(
+            {
+                "algorithm": {
+                    "name": "gigpo",
+                    "gigpo_normalization": "bad",
+                }
+            }
+        )
 
 
 def test_train_config_rejects_empty_output() -> None:
@@ -109,6 +157,24 @@ def test_memory_fit_known_good_9b_checkpoint_anchor_fits() -> None:
 
     assert estimate.fits
     assert 24.0 <= estimate.estimated_peak_gb <= 28.0
+
+
+def test_memory_fit_labels_multiturn_estimates_as_risky() -> None:
+    config = TrainConfig(
+        model_id="mlx-community/Qwen3-0.6B-4bit",
+        group_size=4,
+        max_prompt_len=128,
+        max_completion_len=64,
+        max_turns=3,
+        max_observation_len=32,
+        rollout_mode="parallel_per_turn",
+    )
+
+    estimate = memory_fit(config, available_unified_memory_gb=48.0)
+
+    assert estimate.confidence == "estimated — multi-turn OOM risk, not measured"
+    assert "multi-turn OOM risk" in estimate.display_label()
+    assert estimate.reduction_hint == "set rollout_mode='sequential' or reduce group_size"
 
 
 def test_memory_estimator_matches_measured_anchors() -> None:

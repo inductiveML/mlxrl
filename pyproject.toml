@@ -1,6 +1,6 @@
 [project]
 name = "inductive-mlxrl"
-version = "0.1.2"
+version = "0.2.0"
 description = "Small single-process RL post-training for LLMs on Apple Silicon with MLX."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -47,6 +47,7 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.sdist]
 include = [
     "benchmarks",
+    "examples",
     "mlxrl",
     "tests",
     "CHANGELOG.md",

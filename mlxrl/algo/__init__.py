@@ -1,5 +1,12 @@
 """Algorithm-specific advantage and loss code."""
 
+from mlxrl.algo.gigpo import (
+    GiGPOAlgorithm,
+    anchor_state_groups,
+    anchor_state_step_advantages,
+    compute_gigpo_step_advantages,
+    flatten_step_records,
+)
 from mlxrl.algo.grpo import (
     AlgorithmLossMetrics,
     DAPOAlgorithm,
@@ -28,12 +35,17 @@ __all__ = [
     "GRPOAlgorithm",
     "GRPOLossMetrics",
     "GSPOAlgorithm",
+    "GiGPOAlgorithm",
     "PolicyAlgorithm",
     "RLOOAlgorithm",
     "algorithm_by_name",
+    "anchor_state_groups",
+    "anchor_state_step_advantages",
     "approximate_kl",
     "clip_ratio",
+    "compute_gigpo_step_advantages",
     "filter_zero_advantage_groups",
+    "flatten_step_records",
     "group_center_rewards",
     "group_normalize_rewards",
     "grpo_loss",

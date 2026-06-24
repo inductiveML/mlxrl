@@ -20,6 +20,12 @@ from mlxrl.policy.model import (
     load_policy_with_lora,
     strict_lora_config,
 )
+from mlxrl.policy.trajectory_logprobs import (
+    TrajectoryDualLogprobs,
+    TrajectoryLogprobs,
+    trajectory_action_logprobs,
+    trajectory_dual_logprobs,
+)
 
 __all__ = [
     "DEFAULT_LORA_TARGET_SUFFIXES",
@@ -28,6 +34,8 @@ __all__ = [
     "DualLogprobs",
     "LoRAConfig",
     "Phase0Report",
+    "TrajectoryDualLogprobs",
+    "TrajectoryLogprobs",
     "adapters_disabled",
     "assert_lora_on_every_layer",
     "assert_only_lora_trainable",
@@ -38,4 +46,6 @@ __all__ = [
     "pad_token_id_from_tokenizer",
     "prefix_cached_completion_logprobs",
     "strict_lora_config",
+    "trajectory_action_logprobs",
+    "trajectory_dual_logprobs",
 ]

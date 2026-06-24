@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import argparse
 
+from mlxrl.algo.gigpo import GiGPOAlgorithm
 from mlxrl.algo.grpo import DAPOAlgorithm, DrGRPOAlgorithm, GSPOAlgorithm
-from mlxrl.cli import _algorithm_from_args, _algorithm_from_config
+from mlxrl.cli import (
+    _algorithm_from_args,
+    _algorithm_from_config,
+    _env_factory_from_config,
+    _trajectory_algorithm_from_config,
+)
 from mlxrl.config import AlgorithmConfig, TrainConfig
 
 
@@ -109,3 +115,33 @@ def test_algorithm_from_args_preserves_disabled_clipping() -> None:
     assert isinstance(algorithm, DAPOAlgorithm)
     assert algorithm.clip_low is None
     assert algorithm.clip_high is None
+
+
+def test_trajectory_algorithm_from_config_builds_gigpo() -> None:
+    config = TrainConfig(
+        algorithm=AlgorithmConfig(
+            name="gigpo",
+            clip_low=0.1,
+            clip_high=0.2,
+            gigpo_omega=0.5,
+            gigpo_gamma=0.9,
+            gigpo_normalization="center",
+        )
+    )
+
+    algorithm = _trajectory_algorithm_from_config(config)
+
+    assert isinstance(algorithm, GiGPOAlgorithm)
+    assert algorithm.omega == 0.5
+    assert algorithm.gamma == 0.9
+    assert algorithm.normalization == "center"
+    assert algorithm.clip_low == 0.1
+    assert algorithm.clip_high == 0.2
+
+
+def test_env_factory_from_config_builds_reference_env() -> None:
+    config = TrainConfig(env_name="recurring-text", max_turns=2)
+    env = _env_factory_from_config(config)("task", 0, 0)
+
+    assert env.max_turns == 2
+    assert env.reset() == "task=task; state=start"

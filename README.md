@@ -1,15 +1,17 @@
 # mlxrl
 
-Fast on-policy MLX RL for Apple Silicon; not a general RL framework, not
-preference tuning, and not distributed training.
+Fast on-policy MLX RL for Apple Silicon, including single-turn GRPO-family RL
+and multi-turn GiGPO; not a general RL framework, not preference tuning, and
+not distributed training.
 
 `mlxrl` is a small, single-process RL post-training library for LLMs on Apple
 Silicon. It is built around one idea: GRPO on MLX should be a fast batched
 rollout path with a thin loss and optimizer step on top, not a framework.
 
-The current implementation targets QLoRA GRPO on local 4-bit MLX models. It
-reuses `mlx-lm` model loading, LoRA layers, KV caches, and sampling utilities,
-and keeps generation and training in one Python process with one model object.
+The current implementation targets QLoRA GRPO/GiGPO on local 4-bit MLX models.
+It reuses `mlx-lm` model loading, LoRA layers, KV caches, and sampling
+utilities, and keeps generation and training in one Python process with one
+model object.
 
 `mlxrl` is pre-1.0. The correctness gates are stable, but import APIs and config
 fields may change before a 1.0 release.
@@ -41,6 +43,9 @@ UV_CACHE_DIR=.uv-cache uv run mlxrl train \
 - Adapter-disabled reference policy on the same model object.
 - GRPO, Dr. GRPO, DAPO, and GSPO loss variants.
 - RLOO (REINFORCE Leave-One-Out) as a critic-free rollout objective.
+- Multi-turn agentic rollout through an `Environment` / `EnvFactory` protocol.
+- GiGPO with episode-level and anchor-state step-level advantages.
+- Full-forward trajectory action-logprob recompute for 4-bit correctness.
 - QLoRA injection on dense and heterogeneous/hybrid layer stacks.
 - Qwen3.5-style hybrid support via MLX-LM auto LoRA targeting, including
   DeltaNet `linear_attn.in_proj_*` and dense attention `q/k/v/o_proj`.
@@ -134,6 +139,14 @@ UV_CACHE_DIR=.uv-cache uv run mlxrl train \
   --available-memory-gb 48
 ```
 
+Reference multi-turn GiGPO run against the built-in recurring-state env:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run mlxrl train \
+  --config examples/qwen3_0_6b_gigpo_recurring.toml \
+  --available-memory-gb 48
+```
+
 The config schema validates model id, quant bits, group size, completion/prompt
 lengths, checkpointing granularity, `iogpu.wired_limit_mb`, optimizer settings,
 algorithm hyperparameters, KL beta, and seed before a model is loaded. CLI
@@ -218,6 +231,45 @@ metrics = optimizer_step(
 )
 ```
 
+Multi-turn GiGPO uses the additive trajectory path:
+
+```python
+from mlxrl.algo import GiGPOAlgorithm
+from mlxrl.env import RecurringStateTextEnv
+from mlxrl.rollout import generate_agentic_trajectories
+from mlxrl.train import batch_from_trajectories, optimizer_step_trajectory
+
+algorithm = GiGPOAlgorithm(omega=1.0, gamma=1.0)
+trajectories = generate_agentic_trajectories(
+    model=model,
+    tokenizer=tokenizer,
+    env_factory=lambda task, seed, group: RecurringStateTextEnv(
+        task=str(task),
+        max_turns=3,
+    ),
+    tasks=["finish the task"],
+    group_size=4,
+    sampling=sampling,
+    rollout_mode="parallel_per_turn",
+)
+batch = batch_from_trajectories(
+    model=model,
+    trajectories=trajectories,
+    group_size=4,
+    pad_token_id=pad_token_id,
+    algorithm=algorithm,
+    compute_reference=beta != 0.0,
+)
+metrics = optimizer_step_trajectory(
+    model=model,
+    optimizer=optimizer,
+    batch=batch,
+    beta=beta,
+    pad_token_id=pad_token_id,
+    algorithm=algorithm,
+)
+```
+
 `micro_batch_size=0` keeps the original whole-batch path. Micro-batching is
 currently exact for token-mean policy losses: base GRPO, DAPO, GSPO token mode,
 RLOO, and Dr. GRPO with `loss_reduction="token_mean"`. Sequence-reduced losses
@@ -253,6 +305,7 @@ import concrete algorithm implementations.
 | DAPO | asymmetric low/high clipping plus optional dynamic zero-advantage group filtering |
 | GSPO | sequence-level, length-normalized importance ratio and clipping |
 | RLOO | leave-one-out group baseline, no critic, no std-normalized advantage |
+| GiGPO | multi-turn episode advantage plus anchor-state step advantage |
 
 ## Memory Preflight
 
@@ -271,6 +324,9 @@ Qwen3.5-9B/G2/seq609/per-layer-checkpointed, `45.9 GB` for
 Qwen3.5-9B/G4/seq609/per-layer-checkpointed, and `36 GB` for
 Qwen3.5-9B/G2/seq128/no-checkpoint. For hybrid 9B no-checkpoint long-sequence
 configs, it reports an OOM-risk lower bound rather than a fake precise peak.
+Multi-turn configs include `max_turns` and `max_observation_len` in the
+estimated trajectory length and are labeled as estimated OOM-risk shapes until
+new measured anchors are added.
 For an obviously too-large Qwen3.5-9B/G8/prompt97/T512/no-checkpoint config on
 48 GB, it flags the run and suggests the measured-boundary fallback around
 G4/T512/checkpointed.
@@ -350,6 +406,7 @@ updates, or benchmark timing boundaries.
 ```text
 mlxrl/
   rollout/   # batched group generation
+  env/       # agentic environment protocols and reference envs
   policy/    # model loading, LoRA setup, logprob passes
   algo/      # GRPO-family advantages and losses
   train/     # value_and_grad and optimizer integration

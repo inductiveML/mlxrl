@@ -7,11 +7,12 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import mlx.core as mx
 import mlx.optimizers as optim
 
+from mlxrl.algo.gigpo import GiGPOAlgorithm
 from mlxrl.algo.grpo import (
     DAPOAlgorithm,
     DrGRPOAlgorithm,
@@ -37,6 +38,7 @@ from mlxrl.data.gsm8k import (
     format_gsm8k_prompt,
 )
 from mlxrl.data.rewards import accuracy_reward, format_reward
+from mlxrl.env import EnvFactory, RecurringStateTextEnv, SingleTurnRewardEnv
 from mlxrl.policy.logprobs import pad_token_id_from_tokenizer
 from mlxrl.policy.model import (
     DEFAULT_MODEL_ID,
@@ -44,6 +46,7 @@ from mlxrl.policy.model import (
     encode_prompt,
     load_policy_with_lora,
 )
+from mlxrl.rollout.agentic import RolloutMode, generate_agentic_trajectories
 from mlxrl.rollout.naive import SamplingConfig, generate_group_rollouts
 from mlxrl.rollout.optimized import generate_prefix_cached_group_rollouts
 from mlxrl.train.grpo import (
@@ -52,6 +55,10 @@ from mlxrl.train.grpo import (
     grpo_metrics_from_batch,
     optimizer_step,
     reward_trend,
+)
+from mlxrl.train.trajectory import (
+    batch_from_trajectories,
+    optimizer_step_trajectory,
 )
 
 
@@ -226,6 +233,20 @@ def _algorithm_from_config(config: TrainConfig) -> Algorithm:
     return _algorithm_from_algorithm_config(
         config.algorithm,
         max_completion_len=config.max_completion_len,
+    )
+
+
+def _trajectory_algorithm_from_config(config: TrainConfig) -> GiGPOAlgorithm:
+    algorithm = config.algorithm
+    name = normalize_algorithm_name(algorithm.name)
+    if name != "gigpo":
+        raise ValueError(f"Unknown trajectory algorithm {algorithm.name!r}.")
+    return GiGPOAlgorithm(
+        omega=algorithm.gigpo_omega,
+        gamma=algorithm.gigpo_gamma,
+        normalization=cast(Any, algorithm.gigpo_normalization),
+        clip_low=algorithm.clip_low,
+        clip_high=algorithm.clip_high,
     )
 
 
@@ -457,6 +478,9 @@ def _namespace_from_train_config(config: TrainConfig) -> argparse.Namespace:
         micro_batch_size=config.micro_batch_size,
         algorithm_config=config.algorithm,
         algorithm=config.algorithm.name,
+        max_turns=config.max_turns,
+        rollout_mode=config.rollout_mode,
+        env_name=config.env_name,
     )
 
 
@@ -522,9 +546,125 @@ def _phase_train(args: argparse.Namespace) -> int:
         print(f"algorithm: {normalize_algorithm_name(config.algorithm.name)}")
         return 0
 
+    if normalize_algorithm_name(config.algorithm.name) == "gigpo":
+        return _phase_agentic_train(config)
+
     namespace = _namespace_from_train_config(config)
     namespace._algorithm_override = _algorithm_from_config(config)
     return _phase1_gsm8k(namespace)
+
+
+def _phase_agentic_train(config: TrainConfig) -> int:
+    model, tokenizer, _ = load_policy_with_lora(
+        model_id=config.model_id,
+        config=LoRAConfig(
+            rank=config.rank,
+            scale=config.scale,
+            dropout=config.dropout,
+            grad_checkpoint=config.gradient_checkpointing,
+        ),
+    )
+    optimizer = optim.Adam(learning_rate=config.optimizer.learning_rate)
+    pad_token_id = pad_token_id_from_tokenizer(tokenizer)
+    sampling = SamplingConfig(
+        max_tokens=config.max_completion_len,
+        temperature=config.sampling.temperature,
+        top_p=config.sampling.top_p,
+        min_p=config.sampling.min_p,
+        top_k=config.sampling.top_k,
+    )
+    algorithm = _trajectory_algorithm_from_config(config)
+    env_factory = _env_factory_from_config(config)
+    reward_history: list[float] = []
+    kl_history: list[float] = []
+    final_batch = None
+    final_metrics = None
+    print(f"algorithm: {algorithm.name}")
+    print(f"env_name: {config.env_name}")
+    print(f"rollout_mode: {config.rollout_mode}")
+
+    for step in range(config.steps):
+        task = f"{config.env_name}: task {step}"
+        trajectories = generate_agentic_trajectories(
+            model=model,
+            tokenizer=tokenizer,
+            env_factory=env_factory,
+            tasks=(task,),
+            group_size=config.group_size,
+            sampling=sampling,
+            seed=config.seed + step,
+            rollout_mode=cast(RolloutMode, config.rollout_mode),
+        )
+        batch = batch_from_trajectories(
+            model=model,
+            trajectories=trajectories,
+            group_size=config.group_size,
+            pad_token_id=pad_token_id,
+            algorithm=algorithm,
+            use_checkpoint=config.gradient_checkpointing,
+            compute_reference=config.kl_beta != 0.0,
+        )
+        metrics = optimizer_step_trajectory(
+            model=model,
+            optimizer=optimizer,
+            batch=batch,
+            beta=config.kl_beta,
+            pad_token_id=pad_token_id,
+            algorithm=algorithm,
+            use_checkpoint=config.gradient_checkpointing,
+            micro_batch_size=config.micro_batch_size,
+        )
+        reward_history.append(metrics.mean_reward)
+        kl_history.append(metrics.kl)
+        final_batch = batch
+        final_metrics = metrics
+        print(
+            f"step={step + 1:02d} "
+            f"reward={metrics.mean_reward:.4f} "
+            f"kl={metrics.kl:.6f} "
+            f"ratio={metrics.mean_ratio:.6f} "
+            f"clip={metrics.clip_fraction:.6f} "
+            f"loss={metrics.loss:.6f}",
+            flush=True,
+        )
+
+    if final_batch is None or final_metrics is None:
+        raise RuntimeError("No agentic batches were produced.")
+    first_reward, last_reward = reward_trend(reward_history)
+    print(f"reward_first_window: {first_reward:.6f}")
+    print(f"reward_last_window: {last_reward:.6f}")
+    print(f"kl_max: {max(kl_history):.6f}")
+
+    output = _validated_output_path(config.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    mx.savez(
+        str(output),
+        rewards=final_batch.rewards,
+        step_advantages=final_batch.step_advantages,
+        advantages=final_batch.advantages,
+        old_policy_logprobs=final_batch.old_policy_logprobs,
+        reference_logprobs=final_batch.reference_logprobs,
+        action_mask=final_batch.action_mask,
+        loss=mx.array(final_metrics.loss, dtype=mx.float32),
+        kl=mx.array(final_metrics.kl, dtype=mx.float32),
+    )
+    print(f"reference_output: {output}")
+    return 0
+
+
+def _env_factory_from_config(config: TrainConfig) -> EnvFactory:
+    env_name = config.env_name
+    if env_name == "recurring-text":
+        return lambda task, seed, group: RecurringStateTextEnv(
+            task=str(task),
+            max_turns=config.max_turns,
+        )
+    if env_name == "single-turn":
+        return lambda task, seed, group: SingleTurnRewardEnv(
+            prompt=str(task),
+            reward_fn=lambda text: 1.0 if "finish" in text.lower() else 0.0,
+        )
+    raise ValueError(f"Unknown env_name {env_name!r}.")
 
 
 def _phase2_equivalence(args: argparse.Namespace) -> int:
@@ -734,7 +874,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--steps", type=int, default=None)
     train.add_argument("--group-size", type=int, default=None)
     train.add_argument("--max-tokens", type=int, default=None)
-    train.add_argument("--algorithm", choices=["grpo", "dr-grpo", "dapo", "gspo", "rloo"])
+    train.add_argument("--algorithm", choices=["grpo", "dr-grpo", "dapo", "gspo", "rloo", "gigpo"])
     train.add_argument("--beta", type=float, default=None)
     train.add_argument("--seed", type=int, default=None)
     train.add_argument("--output", default=None)

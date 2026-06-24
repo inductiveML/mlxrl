@@ -11,7 +11,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-16T08:05:10.596359Z"
+exclude-newer = "2026-06-17T16:10:46.708507Z"
 exclude-newer-span = "P7D"
 
 [[package]]
@@ -661,7 +661,7 @@ wheels = [
 
 [[package]]
 name = "inductive-mlxrl"
-version = "0.1.2"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "mlx", marker = "python_full_version < '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin'" },
