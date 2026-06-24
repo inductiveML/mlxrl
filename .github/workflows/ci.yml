@@ -8,6 +8,8 @@ jobs:
   linux-cpu:
     name: Linux CPU-safe checks
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
