@@ -18,11 +18,11 @@ jobs:
           python-version: "3.11"
 
       - name: Ruff
-        run: uv run --no-project --with ruff ruff check .
+        run: uv run --no-project --python 3.11 --with ruff ruff check .
 
       - name: Pytest CPU-safe subset
         run: >
-          uv run --no-project --with pytest
+          uv run --no-project --python 3.11 --with pytest
           pytest
           tests/test_benchmark_metrics.py
           tests/test_config.py
@@ -31,7 +31,7 @@ jobs:
 
       - name: Pyright CPU-safe subset
         run: >
-          uv run --no-project --with pyright
+          uv run --no-project --python 3.11 --with pyright --with pytest
           pyright
           mlxrl/config.py
           tests/test_config.py
