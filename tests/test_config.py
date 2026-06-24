@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from mlxrl.config import ConfigError, TrainConfig, estimate_peak_memory_gb, memory_fit
+from mlxrl.config import (
+    ConfigError,
+    TrainConfig,
+    estimate_peak_memory_gb,
+    memory_fit,
+    validate_output_path,
+)
 
 
 def test_train_config_loads_toml_file(tmp_path) -> None:
@@ -42,6 +48,28 @@ top_p = 1.0
 def test_train_config_rejects_incoherent_values() -> None:
     with pytest.raises(ConfigError, match="group_size must be at least 1"):
         TrainConfig.from_mapping({"group_size": 0})
+
+
+def test_train_config_rejects_empty_output() -> None:
+    with pytest.raises(ConfigError, match="output must be a non-empty string"):
+        TrainConfig.from_mapping({"output": ""})
+
+
+def test_train_config_rejects_output_path_escape() -> None:
+    with pytest.raises(ConfigError, match="relative path inside the working directory"):
+        TrainConfig.from_mapping({"output": "../outside.npz"})
+
+
+def test_train_config_rejects_absolute_output() -> None:
+    with pytest.raises(ConfigError, match="relative path inside the working directory"):
+        TrainConfig.from_mapping({"output": "/tmp/outside.npz"})
+
+
+def test_validate_output_path_accepts_nested_relative_path() -> None:
+    assert validate_output_path("reference_outputs/phase1_reference.npz").parts == (
+        "reference_outputs",
+        "phase1_reference.npz",
+    )
 
 
 def test_memory_fit_flags_large_9b_config_and_suggests_fallback() -> None:

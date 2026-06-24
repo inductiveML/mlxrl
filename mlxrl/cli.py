@@ -24,10 +24,12 @@ from mlxrl.algo.grpo import (
 )
 from mlxrl.algorithm import Algorithm
 from mlxrl.config import (
+    AlgorithmConfig,
     ConfigError,
     TrainConfig,
     memory_fit,
     normalize_algorithm_name,
+    validate_output_path,
 )
 from mlxrl.data.gsm8k import (
     MINI_GSM8K,
@@ -150,34 +152,34 @@ def _clip_value(raw: str, default: float) -> float | None:
 
 
 def _algorithm_from_args(args: argparse.Namespace) -> Algorithm:
-    name = args.algorithm.lower().replace("_", "-")
-    if name == "grpo":
-        return GRPOAlgorithm()
-    if name in {"dr-grpo", "drgrpo"}:
-        return DrGRPOAlgorithm(
-            normalize_rewards=args.drgrpo_normalize_rewards,
-            loss_reduction=args.drgrpo_loss_reduction,
-            max_tokens=args.drgrpo_max_tokens or args.max_tokens,
-        )
-    if name == "dapo":
-        return DAPOAlgorithm(
-            clip_low=_clip_value(args.clip_low, 0.2),
-            clip_high=_clip_value(args.clip_high, 0.28),
-            dynamic_sampling=args.dapo_dynamic_sampling,
-        )
-    if name == "gspo":
-        return GSPOAlgorithm(
-            importance=args.gspo_importance,
-            clip_low=_clip_value(args.clip_low, 3e-4),
-            clip_high=_clip_value(args.clip_high, 4e-4),
-        )
-    if name == "rloo":
-        return RLOOAlgorithm()
-    raise ValueError(f"Unknown algorithm {args.algorithm!r}.")
+    return _algorithm_from_algorithm_config(
+        AlgorithmConfig(
+            name=args.algorithm,
+            clip_low=None if args.clip_low == "default" else _clip_value(args.clip_low, 0.2),
+            clip_high=None if args.clip_high == "default" else _clip_value(args.clip_high, 0.28),
+            dapo_dynamic_sampling=args.dapo_dynamic_sampling,
+            gspo_importance=args.gspo_importance,
+            drgrpo_normalize_rewards=args.drgrpo_normalize_rewards,
+            drgrpo_loss_reduction=args.drgrpo_loss_reduction,
+            drgrpo_max_tokens=args.drgrpo_max_tokens,
+        ),
+        max_completion_len=args.max_tokens,
+        dapo_default_clip_low=0.2 if args.clip_low == "default" else None,
+        dapo_default_clip_high=0.28 if args.clip_high == "default" else None,
+        gspo_default_clip_low=3e-4 if args.clip_low == "default" else None,
+        gspo_default_clip_high=4e-4 if args.clip_high == "default" else None,
+    )
 
 
-def _algorithm_from_config(config: TrainConfig) -> Algorithm:
-    algorithm = config.algorithm
+def _algorithm_from_algorithm_config(
+    algorithm: AlgorithmConfig,
+    max_completion_len: int,
+    *,
+    dapo_default_clip_low: float | None = 0.2,
+    dapo_default_clip_high: float | None = 0.28,
+    gspo_default_clip_low: float | None = 3e-4,
+    gspo_default_clip_high: float | None = 4e-4,
+) -> Algorithm:
     name = normalize_algorithm_name(algorithm.name)
     if name == "grpo":
         return GRPOAlgorithm()
@@ -185,23 +187,46 @@ def _algorithm_from_config(config: TrainConfig) -> Algorithm:
         return DrGRPOAlgorithm(
             normalize_rewards=algorithm.drgrpo_normalize_rewards,
             loss_reduction=algorithm.drgrpo_loss_reduction,
-            max_tokens=algorithm.drgrpo_max_tokens or config.max_completion_len,
+            max_tokens=algorithm.drgrpo_max_tokens or max_completion_len,
         )
     if name == "dapo":
         return DAPOAlgorithm(
-            clip_low=algorithm.clip_low if algorithm.clip_low is not None else 0.2,
-            clip_high=algorithm.clip_high if algorithm.clip_high is not None else 0.28,
+            clip_low=(
+                algorithm.clip_low
+                if algorithm.clip_low is not None
+                else dapo_default_clip_low
+            ),
+            clip_high=(
+                algorithm.clip_high
+                if algorithm.clip_high is not None
+                else dapo_default_clip_high
+            ),
             dynamic_sampling=algorithm.dapo_dynamic_sampling,
         )
     if name == "gspo":
         return GSPOAlgorithm(
             importance=algorithm.gspo_importance,
-            clip_low=algorithm.clip_low if algorithm.clip_low is not None else 3e-4,
-            clip_high=algorithm.clip_high if algorithm.clip_high is not None else 4e-4,
+            clip_low=(
+                algorithm.clip_low
+                if algorithm.clip_low is not None
+                else gspo_default_clip_low
+            ),
+            clip_high=(
+                algorithm.clip_high
+                if algorithm.clip_high is not None
+                else gspo_default_clip_high
+            ),
         )
     if name == "rloo":
         return RLOOAlgorithm()
     raise ValueError(f"Unknown algorithm {algorithm.name!r}.")
+
+
+def _algorithm_from_config(config: TrainConfig) -> Algorithm:
+    return _algorithm_from_algorithm_config(
+        config.algorithm,
+        max_completion_len=config.max_completion_len,
+    )
 
 
 def _completion_rewards(
@@ -229,6 +254,13 @@ def _padded_tokens(
         [list(row) + [pad_token_id] * (max_len - len(row)) for row in rows],
         dtype=mx.int32,
     )
+
+
+def _validated_output_path(raw: str, label: str = "output") -> Path:
+    try:
+        return validate_output_path(raw, label)
+    except ConfigError as error:
+        raise SystemExit(f"Invalid {label}: {error}") from error
 
 
 def _rollout_timed(
@@ -372,7 +404,7 @@ def _phase1_gsm8k(args: argparse.Namespace) -> int:
 
     if final_batch is None or final_metrics is None or final_completions is None:
         raise RuntimeError("No Phase 1 batches were produced.")
-    output = Path(args.output)
+    output = _validated_output_path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     max_prompt_len = max(len(completion.prompt_tokens) for completion in final_completions)
     max_completion_len = max(len(completion.completion_tokens) for completion in final_completions)
@@ -597,7 +629,7 @@ def _phase2_equivalence(args: argparse.Namespace) -> int:
     print(f"peak_memory_delta_gb: {phase2_peak - phase1_peak:.6f}")
 
     if args.output:
-        output = Path(args.output)
+        output = _validated_output_path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
         mx.savez(
             str(output),

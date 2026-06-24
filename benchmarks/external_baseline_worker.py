@@ -14,7 +14,6 @@ import time
 from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 from run_phase4 import (
@@ -63,7 +62,7 @@ def run(args: argparse.Namespace) -> BenchResult:
 def prompt_rows(args: argparse.Namespace) -> list[dict[str, str]]:
     from mlxrl.cli import _gsm8k_prompt
 
-    prompt_args = SimpleNamespace(use_chat_template=False)
+    prompt_args = argparse.Namespace(use_chat_template=False)
     rows: list[dict[str, str]] = []
     for step in range(args.steps):
         prompt, answer = _gsm8k_prompt(prompt_args, step)
@@ -302,7 +301,7 @@ def run_mlx_lm_lora(args: argparse.Namespace) -> BenchResult:
 
     with tempfile.TemporaryDirectory(prefix="mlxrl-mlx-lm-lora-") as tmpdir:
         adapter_dir = Path(tmpdir) / "adapters"
-        model, tokenizer, adapter_file = from_pretrained(
+        loaded = from_pretrained(
             model=args.model,
             new_adapter_path=str(adapter_dir),
             lora_config={
@@ -312,10 +311,14 @@ def run_mlx_lm_lora(args: argparse.Namespace) -> BenchResult:
                 "num_layers": -1,
             },
         )
+        model = loaded[0]
+        tokenizer = loaded[1]
+        adapter_file = loaded[2] if len(loaded) > 2 else str(adapter_dir)
         prompt_token_lengths = [
             encoded_prompt_token_count(tokenizer, row["prompt"]) for row in rows
         ]
-        ref_model, _ = load(args.model)
+        ref_loaded = load(args.model)
+        ref_model = ref_loaded[0]
         ref_model.freeze()
         optimizer = optim.Adam(learning_rate=args.learning_rate)
         dataset = GRPODataset(rows, tokenizer, text_completion_key="text_completion")
@@ -347,7 +350,6 @@ def run_mlx_lm_lora(args: argparse.Namespace) -> BenchResult:
                     top_k=args.top_k,
                     min_p=args.min_p,
                     gradient_accumulation_steps=1,
-                    importance_sampling_level=None,
                     grpo_loss_type="grpo",
                 ),
                 training_callback=timer,

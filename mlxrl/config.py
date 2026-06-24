@@ -126,6 +126,7 @@ class TrainConfig:
             raise ConfigError("iogpu_wired_limit_mb must be positive or null.")
         if self.micro_batch_size < 0:
             raise ConfigError("micro_batch_size must be non-negative.")
+        validate_output_path(self.output)
         self.optimizer.validate()
         self.sampling.validate()
         self.algorithm.validate()
@@ -198,6 +199,17 @@ def normalize_algorithm_name(name: str) -> str:
     if normalized == "drgrpo":
         return "dr-grpo"
     return normalized
+
+
+def validate_output_path(value: str, field_name: str = "output") -> Path:
+    """Validate an output path that the CLI may create before writing artifacts."""
+
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"{field_name} must be a non-empty string.")
+    output_path = Path(value.strip())
+    if output_path.is_absolute() or ".." in output_path.parts:
+        raise ConfigError(f"{field_name} must be a relative path inside the working directory.")
+    return output_path
 
 
 def model_size_billions(model_id: str) -> float:

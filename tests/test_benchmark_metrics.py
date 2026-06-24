@@ -3,13 +3,17 @@ from __future__ import annotations
 import json
 from argparse import Namespace
 
+import pytest
+
 from benchmarks.audit_phase4_config import (
     FastPathInspection,
+    audit_artifact_paths,
     build_audit_rows,
     render_markdown,
 )
 from benchmarks.run_phase4 import (
     BenchResult,
+    controller_artifact_paths,
     enforce_gradient_timing_sanity,
     format_result_line,
     render_summary,
@@ -127,3 +131,20 @@ def test_gate4_audit_flags_mlx_tune_sampler_caveat() -> None:
     assert "top_p/top_k/min_p are not used" in by_target["mlx-tune"].caveat
     assert by_target["mlx-lm-lora"].top_k == "0"
     assert "mlx-lm-lora" in markdown
+
+
+def test_controller_artifact_paths_reject_escape() -> None:
+    args = Namespace(output="../phase4.jsonl", summary="benchmarks/results/phase4.md")
+
+    with pytest.raises(SystemExit, match="relative path inside the working directory"):
+        controller_artifact_paths(args)
+
+
+def test_audit_artifact_paths_reject_absolute_json_output() -> None:
+    args = Namespace(
+        output="benchmarks/results/gate4_config_audit.md",
+        json_output="/tmp/gate4_config_audit.json",
+    )
+
+    with pytest.raises(SystemExit, match="relative path inside the working directory"):
+        audit_artifact_paths(args)

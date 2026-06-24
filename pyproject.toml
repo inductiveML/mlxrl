@@ -52,7 +52,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"
 reportMissingTypeStubs = "none"
-include = ["mlxrl", "tests"]
+include = ["mlxrl", "tests", "benchmarks"]
 
 [tool.pytest.ini_options]
 markers = [

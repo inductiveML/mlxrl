@@ -33,6 +33,8 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from mlxrl.config import ConfigError, validate_output_path
+
 DEFAULT_TARGETS = ("mlxrl", "mlx-lm", "mlx-lm-g4", "mlx-tune", "mlx-lm-lora")
 DEFAULT_MODEL = "mlx-community/Qwen3-0.6B-4bit"
 MIN_SYNCED_GRADIENT_STEP_SECONDS = 0.010
@@ -148,9 +150,8 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
 def run_controller(args: argparse.Namespace) -> int:
     targets = tuple(target.strip() for target in args.targets.split(",") if target.strip())
     validate_controller_args(args, targets)
-    output = Path(args.output)
+    output, summary = controller_artifact_paths(args)
     output.parent.mkdir(parents=True, exist_ok=True)
-    summary = Path(args.summary)
     summary.parent.mkdir(parents=True, exist_ok=True)
 
     results: list[BenchResult] = []
@@ -169,6 +170,16 @@ def run_controller(args: argparse.Namespace) -> int:
     if any(result.status != "ok" for result in results):
         return 0 if args.allow_missing_baselines else 1
     return 0
+
+
+def controller_artifact_paths(args: argparse.Namespace) -> tuple[Path, Path]:
+    try:
+        return (
+            validate_output_path(args.output, "output"),
+            validate_output_path(args.summary, "summary"),
+        )
+    except ConfigError as error:
+        raise SystemExit(f"Invalid benchmark artifact path: {error}") from error
 
 
 def validate_controller_args(args: argparse.Namespace, targets: Sequence[str]) -> None:
@@ -525,7 +536,9 @@ def run_mlx_lm_worker(args: argparse.Namespace) -> BenchResult:
 
     set_mlx_wired_limit(mx, args.wired_limit_mb)
     mx.random.seed(args.seed)
-    model, tokenizer = mlx_lm.load(args.model)
+    loaded = mlx_lm.load(args.model)
+    model = loaded[0]
+    tokenizer = loaded[1]
     sampler = make_sampler(
         temp=args.temperature,
         top_p=args.top_p,
@@ -646,7 +659,7 @@ def read_iogpu_wired_limit_mb() -> int | None:
 
 def result_from_json(raw: str, target: str, pass_index: int) -> BenchResult:
     data = extract_json_object(raw)
-    filtered = {key: data.get(key) for key in JSON_FIELDS if key in data}
+    filtered: dict[str, Any] = {key: data[key] for key in JSON_FIELDS if key in data}
     filtered.setdefault("target", target)
     filtered.setdefault("pass_index", pass_index)
     filtered.setdefault("status", "ok")
@@ -666,7 +679,41 @@ def result_from_json(raw: str, target: str, pass_index: int) -> BenchResult:
             float(filtered["tok_s_denominator"]),
             float(filtered.get("rollout_seconds") or 0.0),
         )
-    return BenchResult(**filtered)
+    return BenchResult(
+        target=str(filtered["target"]),
+        pass_index=int(filtered["pass_index"]),
+        status=str(filtered["status"]),
+        model=str(filtered.get("model") or ""),
+        steps=int(filtered.get("steps") or 0),
+        warmup_steps=int(filtered.get("warmup_steps") or 0),
+        generated_completion_tokens=int(filtered["generated_completion_tokens"]),
+        prompt_tokens=int(filtered["prompt_tokens"]),
+        total_forward_tokens=int(filtered["total_forward_tokens"]),
+        tok_s_denominator=int(filtered["tok_s_denominator"]),
+        rollout_tokens=int(filtered["rollout_tokens"]),
+        rollout_seconds=float(filtered.get("rollout_seconds") or 0.0),
+        rollout_tok_s=_optional_float(filtered.get("rollout_tok_s")),
+        gradient_steps=int(filtered.get("gradient_steps") or 0),
+        gradient_seconds=float(filtered.get("gradient_seconds") or 0.0),
+        gradient_step_s=_optional_float(filtered.get("gradient_step_s")),
+        samples=int(filtered.get("samples") or 0),
+        end_to_end_seconds=float(filtered.get("end_to_end_seconds") or 0.0),
+        samples_s=_optional_float(filtered.get("samples_s")),
+        it_s=_optional_float(filtered.get("it_s")),
+        peak_memory_gb=_optional_float(filtered.get("peak_memory_gb")),
+        mlx_version=_optional_str(filtered.get("mlx_version")),
+        mlx_lm_version=_optional_str(filtered.get("mlx_lm_version")),
+        tool_version=_optional_str(filtered.get("tool_version")),
+        note=str(filtered.get("note") or ""),
+    )
+
+
+def _optional_float(value: Any) -> float | None:
+    return None if value is None else float(value)
+
+
+def _optional_str(value: Any) -> str | None:
+    return None if value is None else str(value)
 
 
 def extract_json_object(raw: str) -> dict[str, Any]:

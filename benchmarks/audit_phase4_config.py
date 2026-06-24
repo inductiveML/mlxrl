@@ -14,6 +14,8 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from mlxrl.config import ConfigError, validate_output_path
+
 try:
     from benchmarks.run_phase4 import (
         DEFAULT_TARGETS,
@@ -354,10 +356,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     targets = tuple(target.strip() for target in args.targets.split(",") if target.strip())
     inspection = inspect_fast_paths()
     rows = build_audit_rows(args, targets, inspection)
-    output = Path(args.output)
+    output, json_output = audit_artifact_paths(args)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(render_markdown(rows), encoding="utf-8")
-    json_output = Path(args.json_output)
     json_output.parent.mkdir(parents=True, exist_ok=True)
     json_output.write_text(
         json.dumps([asdict(row) for row in rows], indent=2, sort_keys=True) + "\n",
@@ -368,6 +369,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     if any(row.status == "fail" for row in rows):
         return 1
     return 0
+
+
+def audit_artifact_paths(args: argparse.Namespace) -> tuple[Path, Path]:
+    try:
+        return (
+            validate_output_path(args.output, "output"),
+            validate_output_path(args.json_output, "json_output"),
+        )
+    except ConfigError as error:
+        raise SystemExit(f"Invalid audit artifact path: {error}") from error
 
 
 if __name__ == "__main__":
