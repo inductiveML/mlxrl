@@ -219,11 +219,14 @@ UV_CACHE_DIR=.uv-cache uv run mlxrl train \
   --dry-run
 ```
 
-The estimator is calibrated to the local anchors we have measured: about
-`6.2 GB` for Qwen3-0.6B/G4/T256, and about `26 GB` for the fitting
-Qwen3.5-9B/G2/T609/per-layer-checkpointed case. It is a preflight guide, not a
-guarantee. For an obviously too-large Qwen3.5-9B/G8/T512/no-checkpoint config
-on 48 GB, it flags the run and suggests a fitting fallback around
+The estimator is calibrated to measured anchors: `6.245 GB` for
+Qwen3-0.6B/G4/prompt≈19/T256, `25.9 GB` for
+Qwen3.5-9B/G2/seq609/per-layer-checkpointed, `45.9 GB` for
+Qwen3.5-9B/G4/seq609/per-layer-checkpointed, and `36 GB` for
+Qwen3.5-9B/G2/seq128/no-checkpoint. For hybrid 9B no-checkpoint long-sequence
+configs, it reports an OOM-risk lower bound rather than a fake precise peak.
+For an obviously too-large Qwen3.5-9B/G8/prompt97/T512/no-checkpoint config on
+48 GB, it flags the run and suggests the measured-boundary fallback around
 G4/T512/checkpointed.
 
 ## Benchmarks

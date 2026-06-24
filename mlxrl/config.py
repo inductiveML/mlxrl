@@ -198,31 +198,69 @@ def model_size_billions(model_id: str) -> float:
     return float(match.group(1))
 
 
+def effective_sequence_length(config: TrainConfig) -> int:
+    """Return the sequence length used by the memory preflight estimate."""
+
+    return config.max_prompt_len + config.max_completion_len
+
+
 def estimate_peak_memory_gb(config: TrainConfig) -> float:
     """Estimate peak unified memory from empirical mlxrl anchors.
 
     Anchors:
-    - Qwen3-0.6B-4bit, G=4, T=256: about 6.2 GB.
-    - Qwen3.5-9B-4bit, G=2, T≈609 with per-layer checkpointing: about 26 GB.
+    - Qwen3-0.6B-4bit, G=4, prompt≈19, T=256: 6.245 GB.
+    - Qwen3.5-9B-4bit, G=2, seq=609, per-layer checkpointing: 25.9 GB.
+    - Qwen3.5-9B-4bit, G=4, seq=609, per-layer checkpointing: 45.9 GB.
+    - Qwen3.5-9B-4bit, G=2, seq=128, no checkpointing: 36 GB.
 
-    The estimate is intentionally conservative for non-checkpointed large
-    hybrid/linear-attention models; it is a preflight guide, not a guarantee.
+    Long-sequence uncheckpointed hybrid estimates are OOM-risk lower bounds,
+    not precise peak predictions. The helper should choose sane fallbacks near
+    the measured boundary without inventing half-terabyte numbers.
     """
 
     model_b = max(model_size_billions(config.model_id), 0.1)
     quant_factor = 4.0 / float(config.quant_bits)
-    checkpoint_factor = 0.62 if config.gradient_checkpointing else 1.0
-    if model_b >= 2.0 and not config.gradient_checkpointing:
-        checkpoint_factor = 3.6
-    peak = (
+    sequence_len = effective_sequence_length(config)
+    if _is_qwen35_9b_hybrid(config.model_id):
+        return _estimate_qwen35_9b_peak_gb(config, sequence_len, quant_factor)
+
+    peak = max(
+        0.75 + 0.55 * model_b * quant_factor,
         6.2
         * (model_b / 0.6) ** 0.72
         * quant_factor
         * (config.group_size / 4.0)
         * (config.max_completion_len / 256.0) ** 0.75
-        * checkpoint_factor
     )
     return float(peak)
+
+
+def _is_qwen35_9b_hybrid(model_id: str) -> bool:
+    normalized = model_id.lower()
+    return "qwen3.5" in normalized and "9b" in normalized
+
+
+def _estimate_qwen35_9b_peak_gb(
+    config: TrainConfig,
+    sequence_len: int,
+    quant_factor: float,
+) -> float:
+    sequence_factor = max(sequence_len, 1) / 609.0
+    if config.gradient_checkpointing:
+        resident_gb = 5.9 * quant_factor
+        per_group_gb = 10.0 * sequence_factor * quant_factor
+        return resident_gb + per_group_gb * config.group_size
+
+    if sequence_len <= 160 and config.group_size <= 2:
+        return (5.6 + 0.2375 * sequence_len) * quant_factor
+
+    checkpointed_same_shape = _estimate_qwen35_9b_peak_gb(
+        replace(config, gradient_checkpointing=True),
+        sequence_len,
+        quant_factor,
+    )
+    oom_floor = 72.0 * quant_factor
+    return max(oom_floor, checkpointed_same_shape * 1.35)
 
 
 def memory_fit(config: TrainConfig, available_unified_memory_gb: float) -> MemoryEstimate:
