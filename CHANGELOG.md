@@ -5,6 +5,14 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses semantic versioning once releases are cut.
 
+## [0.1.1] - 2026-06-24
+
+### Fixed
+
+- Mark `mlx` and `mlx-lm` runtime dependencies as macOS arm64-only and bound the
+  package to Python 3.11 through 3.14 so universal resolvers do not try to solve
+  unsupported MLX platform or Python splits.
+
 ## [0.1.0] - 2026-06-24
 
 ### Added

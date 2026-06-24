@@ -45,6 +45,12 @@ Tests marked `@pytest.mark.metal` require Apple Silicon with MLX/Metal. Run the
 full suite locally on a Mac before cutting releases. A self-hosted Mac runner
 would close this coverage gap.
 
+## Package Compatibility
+
+The PyPI distribution supports Python 3.11 through 3.14. Keep the `mlx` and
+`mlx-lm` runtime dependencies marked for macOS arm64 so universal resolvers do
+not try to solve MLX wheels for unsupported platforms.
+
 ## Release Cycle
 
 Releases are tag-driven and publish to PyPI through Trusted Publishing. Do not
