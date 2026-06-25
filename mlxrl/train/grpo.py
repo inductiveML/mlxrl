@@ -22,6 +22,7 @@ from mlxrl.policy.logprobs import (
 )
 from mlxrl.policy.model import enable_grad_checkpointing
 from mlxrl.rollout.naive import Completion
+from mlxrl.train.reference import reference_logprobs_for_loss
 
 
 @dataclass(frozen=True)
@@ -141,11 +142,17 @@ def batch_from_rollouts(
         compute_reference=compute_reference,
         prepared_inputs=logprob_inputs,
     )
-    mx.eval(  # Logprob sync: freeze old-policy/ref logprobs before adapter mutation.
-        dual.policy,
-        dual.reference,
-        dual.mask,
-    )
+    if compute_reference:
+        mx.eval(  # Logprob sync: freeze old-policy/ref logprobs before adapter mutation.
+            dual.policy,
+            dual.reference,
+            dual.mask,
+        )
+    else:
+        mx.eval(  # Logprob sync: freeze old-policy logprobs before adapter mutation.
+            dual.policy,
+            dual.mask,
+        )
     reward_array = mx.array(list(rewards), dtype=mx.float32)
     advantages = algorithm.compute_advantages(reward_array, group_structure=group_size)
     batch = GRPOBatch(
@@ -220,10 +227,12 @@ def grpo_metrics_from_batch(
             use_checkpoint=use_checkpoint,
         )
     )
-    reference_logprobs = (
-        current.logprobs
-        if beta == 0.0 and batch.reference_is_policy
-        else batch.reference_logprobs
+    reference_logprobs = reference_logprobs_for_loss(
+        current.logprobs,
+        batch.reference_logprobs,
+        beta=beta,
+        reference_is_policy=batch.reference_is_policy,
+        batch_kind="GRPO batch",
     )
     return algorithm.compute_loss(
         policy_logprobs=current.logprobs,

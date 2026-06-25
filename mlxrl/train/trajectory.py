@@ -18,6 +18,7 @@ from mlxrl.policy.trajectory_logprobs import (
     trajectory_dual_logprobs,
 )
 from mlxrl.train.grpo import StepMetrics
+from mlxrl.train.reference import reference_logprobs_for_loss
 from mlxrl.trajectory import Trajectory
 
 
@@ -58,11 +59,17 @@ def batch_from_trajectories(
         use_checkpoint=use_checkpoint,
         compute_reference=compute_reference,
     )
-    mx.eval(  # Logprob sync: freeze old-policy/ref trajectory logprobs before mutation.
-        dual.policy,
-        dual.reference,
-        dual.mask,
-    )
+    if compute_reference:
+        mx.eval(  # Logprob sync: freeze old-policy/ref trajectory logprobs before mutation.
+            dual.policy,
+            dual.reference,
+            dual.mask,
+        )
+    else:
+        mx.eval(  # Logprob sync: freeze old-policy trajectory logprobs before mutation.
+            dual.policy,
+            dual.mask,
+        )
     step_advantages = tuple(
         float(value)
         for value in algorithm.compute_step_advantages(
@@ -105,10 +112,12 @@ def trajectory_metrics_from_batch(
         pad_token_id=pad_token_id,
         use_checkpoint=use_checkpoint,
     )
-    reference_logprobs = (
-        current.logprobs
-        if beta == 0.0 and batch.reference_is_policy
-        else batch.reference_logprobs
+    reference_logprobs = reference_logprobs_for_loss(
+        current.logprobs,
+        batch.reference_logprobs,
+        beta=beta,
+        reference_is_policy=batch.reference_is_policy,
+        batch_kind="Trajectory batch",
     )
     return algorithm.compute_loss(
         policy_logprobs=current.logprobs,

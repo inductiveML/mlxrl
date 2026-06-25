@@ -12,7 +12,11 @@ from mlxrl.algo.gigpo import GiGPOAlgorithm
 from mlxrl.algo.grpo import GRPOAlgorithm
 from mlxrl.rollout.naive import Completion
 from mlxrl.train.grpo import batch_from_rollouts, optimizer_step
-from mlxrl.train.trajectory import batch_from_trajectories, optimizer_step_trajectory
+from mlxrl.train.trajectory import (
+    batch_from_trajectories,
+    optimizer_step_trajectory,
+    trajectory_metrics_from_batch,
+)
 from mlxrl.trajectory import trajectory_from_single_turn
 
 pytestmark = pytest.mark.metal
@@ -84,7 +88,7 @@ def test_gigpo_omega_zero_single_turn_matches_grpo_loss_and_gradient() -> None:
         grpo_model,
         grpo_optimizer,
         grpo_batch,
-        beta=0.04,
+        beta=0.0,
         pad_token_id=0,
         algorithm=GRPOAlgorithm(),
     )
@@ -92,7 +96,7 @@ def test_gigpo_omega_zero_single_turn_matches_grpo_loss_and_gradient() -> None:
         gigpo_model,
         gigpo_optimizer,
         gigpo_batch,
-        beta=0.04,
+        beta=0.0,
         pad_token_id=0,
         algorithm=GiGPOAlgorithm(omega=0.0),
     )
@@ -164,7 +168,7 @@ def test_optimizer_step_trajectory_micro_batch_matches_whole_batch_token_mean() 
         whole_model,
         whole_optimizer,
         whole_batch,
-        beta=0.04,
+        beta=0.0,
         pad_token_id=0,
         algorithm=algorithm,
         micro_batch_size=0,
@@ -173,7 +177,7 @@ def test_optimizer_step_trajectory_micro_batch_matches_whole_batch_token_mean() 
         micro_model,
         micro_optimizer,
         micro_batch,
-        beta=0.04,
+        beta=0.0,
         pad_token_id=0,
         algorithm=algorithm,
         micro_batch_size=2,
@@ -198,3 +202,39 @@ def test_optimizer_step_trajectory_micro_batch_matches_whole_batch_token_mean() 
         errors.append(mx.max(mx.abs(whole_array - micro_array)))
     mx.eval(*errors)  # Test sync: materialize post-update microbatch parameter deltas.
     assert max(float(error.item()) for error in errors) < 1e-6
+
+
+def test_trajectory_metrics_rejects_dummy_reference_with_nonzero_beta() -> None:
+    completions, rewards = _single_turn_data()
+    trajectories = tuple(
+        trajectory_from_single_turn(
+            task_index=completion.prompt_index,
+            group_index=completion.group_index,
+            task="prompt",
+            prompt_tokens=completion.prompt_tokens,
+            completion_tokens=completion.completion_tokens,
+            completion_text=completion.text,
+            reward=reward,
+            state_id=("prompt", completion.prompt_index),
+        )
+        for completion, reward in zip(completions, rewards, strict=True)
+    )
+    algorithm = GiGPOAlgorithm(omega=0.0)
+    model = _model()
+    batch = batch_from_trajectories(
+        model,
+        trajectories,
+        group_size=2,
+        pad_token_id=0,
+        algorithm=algorithm,
+        compute_reference=False,
+    )
+
+    with pytest.raises(ValueError, match=r"Set beta=0\.0 or build the batch"):
+        trajectory_metrics_from_batch(
+            model,
+            batch,
+            beta=0.04,
+            pad_token_id=0,
+            algorithm=algorithm,
+        )

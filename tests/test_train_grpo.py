@@ -125,6 +125,20 @@ def test_grpo_metrics_skips_kl_for_dummy_reference_beta_zero(
     assert float(metrics.kl.item()) == 0.0
 
 
+def test_grpo_metrics_rejects_dummy_reference_with_nonzero_beta() -> None:
+    model = _model()
+    batch = replace(_batch(), reference_is_policy=True)
+
+    with pytest.raises(ValueError, match=r"Set beta=0\.0 or build the batch"):
+        grpo_metrics_from_batch(
+            model,
+            batch,
+            beta=0.04,
+            pad_token_id=0,
+            algorithm=GRPOAlgorithm(),
+        )
+
+
 def test_grpo_metrics_accepts_prepared_logprob_inputs() -> None:
     model = _model()
     batch = _batch()
