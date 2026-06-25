@@ -64,6 +64,12 @@ def _slice_batch(batch: GRPOBatch, start: int, end: int) -> GRPOBatch:
     )
 
 
+def _completion_token_count(batch: GRPOBatch) -> int:
+    """Count valid completion tokens from host-side rollout metadata."""
+
+    return sum(len(completion) for completion in batch.completion_token_ids)
+
+
 def batch_from_rollouts(
     model: nn.Module,
     completions: Sequence[Completion],
@@ -219,12 +225,8 @@ def optimizer_step(
             nn.value_and_grad(model, lambda m: loss_fn(m, batch))(model)
         )
     else:
-        total_tokens_array = mx.sum(batch.mask)
-        mx.eval(  # Micro-batch sync: materialize token denominator for chunk weights.
-            total_tokens_array
-        )
-        total_tokens = float(total_tokens_array.item())
-        if total_tokens <= 0.0:
+        total_tokens = _completion_token_count(batch)
+        if total_tokens <= 0:
             raise ValueError("Cannot micro-batch a GRPO batch with no valid tokens.")
         gradients = None
         loss = policy_gradient_loss = kl = mean_ratio = clip_fraction = mx.array(
@@ -234,11 +236,7 @@ def optimizer_step(
         for start in range(0, num_completions, micro_batch_size):
             end = min(start + micro_batch_size, num_completions)
             sub = _slice_batch(batch, start, end)
-            sub_tokens_array = mx.sum(sub.mask)
-            mx.eval(  # Micro-batch sync: materialize chunk token count for weighting.
-                sub_tokens_array
-            )
-            weight = float(sub_tokens_array.item()) / total_tokens
+            weight = _completion_token_count(sub) / total_tokens
             (sub_loss, sub_aux), sub_grad = nn.value_and_grad(
                 model,
                 lambda m, _s=sub: loss_fn(m, _s),

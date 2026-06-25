@@ -161,12 +161,8 @@ def optimizer_step_trajectory(
             nn.value_and_grad(model, lambda m: loss_fn(m, batch))(model)
         )
     else:
-        total_tokens_array = mx.sum(batch.action_mask)
-        mx.eval(  # Micro-batch sync: materialize token denominator for chunk weights.
-            total_tokens_array
-        )
-        total_tokens = float(total_tokens_array.item())
-        if total_tokens <= 0.0:
+        total_tokens = _action_token_count(batch)
+        if total_tokens <= 0:
             raise ValueError("Cannot micro-batch a trajectory batch with no action tokens.")
         gradients = None
         loss = policy_gradient_loss = kl = mean_ratio = clip_fraction = mx.array(
@@ -176,11 +172,7 @@ def optimizer_step_trajectory(
         for start in range(0, num_trajectories, micro_batch_size):
             end = min(start + micro_batch_size, num_trajectories)
             sub = _slice_trajectory_batch(batch, start, end)
-            sub_tokens_array = mx.sum(sub.action_mask)
-            mx.eval(  # Micro-batch sync: materialize chunk token count for weighting.
-                sub_tokens_array
-            )
-            weight = float(sub_tokens_array.item()) / total_tokens
+            weight = _action_token_count(sub) / total_tokens
             (sub_loss, sub_aux), sub_grad = nn.value_and_grad(
                 model,
                 lambda m, _s=sub: loss_fn(m, _s),
@@ -274,3 +266,9 @@ def _slice_trajectory_batch(
         reference_logprobs=batch.reference_logprobs[start:end, :width],
         action_mask=batch.action_mask[start:end, :width],
     )
+
+
+def _action_token_count(batch: TrajectoryBatch) -> int:
+    """Count valid action tokens from host-side trajectory metadata."""
+
+    return sum(trajectory.action_token_count for trajectory in batch.trajectories)
