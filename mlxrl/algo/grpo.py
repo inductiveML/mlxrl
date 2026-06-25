@@ -516,17 +516,23 @@ def _token_loss_metrics(
     beta: float,
     clipped_ratio: mx.array | None = None,
 ) -> AlgorithmLossMetrics:
+    mask = mask.astype(mx.float32)
+    denominator = mx.maximum(mx.sum(mask), mx.array(1.0, dtype=mx.float32))
     token_kl = approximate_kl(policy_logprobs, reference_logprobs)
-    loss = masked_mean(token_policy_gradient + beta * token_kl, mask)
+    policy_gradient_loss = mx.sum(token_policy_gradient * mask) / denominator
+    kl = mx.sum(token_kl * mask) / denominator
+    mean_ratio = mx.sum(ratio * mask) / denominator
     if clipped_ratio is None:
         clip_fraction = mx.array(0.0, dtype=mx.float32)
     else:
-        clip_fraction = masked_mean(clip_indicator(ratio, clipped_ratio), mask)
+        clip_fraction = (
+            mx.sum(clip_indicator(ratio, clipped_ratio) * mask) / denominator
+        )
     return AlgorithmLossMetrics(
-        loss=loss,
-        policy_gradient_loss=masked_mean(token_policy_gradient, mask),
-        kl=masked_mean(token_kl, mask),
-        mean_ratio=masked_mean(ratio, mask),
+        loss=policy_gradient_loss + beta * kl,
+        policy_gradient_loss=policy_gradient_loss,
+        kl=kl,
+        mean_ratio=mean_ratio,
         clip_fraction=clip_fraction,
     )
 
