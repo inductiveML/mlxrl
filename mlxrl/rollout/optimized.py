@@ -364,16 +364,6 @@ def generate_prompt_set_from_prefix_caches(
             max_tokens=config.max_tokens,
         )
 
-    cache: list[Any] = fixed_decode_cache_from_prefixes(
-        prefixes,
-        group_size=group_size,
-        max_tokens=config.max_tokens,
-    )
-    decode_logprobs = (
-        _compiled_decode_logprobs(model, cache)
-        if compile_decode_step
-        else _decode_logprobs(model, cache)
-    )
     first_logprobs = mx.concatenate(
         [
             mx.broadcast_to(
@@ -409,6 +399,31 @@ def generate_prompt_set_from_prefix_caches(
             active[row_index] = False
             early_eos = config.max_tokens > 1
 
+    if early_eos and draw_keys is not None:
+        _set_random_state(start_random_state)
+        return _generate_prompt_set_sequentially(
+            model=model,
+            tokenizer=tokenizer,
+            prefixes=prefixes,
+            group_size=group_size,
+            config=config,
+            eos_token_ids=eos_token_ids,
+            compile_decode_step=compile_decode_step,
+        )
+    if not any(active):
+        return _rollout_rows_to_outputs(tokenizer, rows, old_policy_logprob_rows)
+
+    cache: list[Any] = fixed_decode_cache_from_prefixes(
+        prefixes,
+        group_size=group_size,
+        max_tokens=config.max_tokens,
+    )
+    decode_logprobs = (
+        _compiled_decode_logprobs(model, cache)
+        if compile_decode_step
+        else _decode_logprobs(model, cache)
+    )
+
     for step in range(1, config.max_tokens):
         logprobs = decode_logprobs(current)
         next_token = _sample_batched_logprobs(
@@ -432,29 +447,57 @@ def generate_prompt_set_from_prefix_caches(
                 active[row_index] = False
                 early_eos = step < config.max_tokens - 1
         current = next_token
+        if early_eos and draw_keys is not None:
+            _set_random_state(start_random_state)
+            return _generate_prompt_set_sequentially(
+                model=model,
+                tokenizer=tokenizer,
+                prefixes=prefixes,
+                group_size=group_size,
+                config=config,
+                eos_token_ids=eos_token_ids,
+                compile_decode_step=compile_decode_step,
+            )
         if not any(active):
             break
-
-    if early_eos:
-        _set_random_state(start_random_state)
-        outputs: list[tuple[tuple[int, ...], tuple[float, ...], str]] = []
-        for prefix in prefixes:
-            outputs.extend(
-                generate_from_prefix_cache(
-                    model=model,
-                    tokenizer=tokenizer,
-                    prefix=prefix,
-                    config=config,
-                    eos_token_ids=eos_token_ids,
-                    compile_decode_step=compile_decode_step,
-                )
-                for _ in range(group_size)
-            )
-        return tuple(outputs)
 
     if final_random_state is not None:
         _set_random_state(final_random_state)
 
+    return _rollout_rows_to_outputs(tokenizer, rows, old_policy_logprob_rows)
+
+
+def _generate_prompt_set_sequentially(
+    *,
+    model: nn.Module,
+    tokenizer: Any,
+    prefixes: Sequence[PrefixCache],
+    group_size: int,
+    config: SamplingConfig,
+    eos_token_ids: frozenset[int],
+    compile_decode_step: bool,
+) -> tuple[tuple[tuple[int, ...], tuple[float, ...], str], ...]:
+    outputs: list[tuple[tuple[int, ...], tuple[float, ...], str]] = []
+    for prefix in prefixes:
+        outputs.extend(
+            generate_from_prefix_cache(
+                model=model,
+                tokenizer=tokenizer,
+                prefix=prefix,
+                config=config,
+                eos_token_ids=eos_token_ids,
+                compile_decode_step=compile_decode_step,
+            )
+            for _ in range(group_size)
+        )
+    return tuple(outputs)
+
+
+def _rollout_rows_to_outputs(
+    tokenizer: Any,
+    rows: Sequence[Sequence[int]],
+    old_policy_logprob_rows: Sequence[Sequence[float]],
+) -> tuple[tuple[tuple[int, ...], tuple[float, ...], str], ...]:
     return tuple(
         (
             tuple(row),
