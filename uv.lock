@@ -661,7 +661,7 @@ wheels = [
 
 [[package]]
 name = "inductive-mlxrl"
-version = "0.2.1"
+version = "0.2.2"
 source = { editable = "." }
 dependencies = [
     { name = "mlx", marker = "python_full_version < '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin'" },

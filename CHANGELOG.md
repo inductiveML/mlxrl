@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses semantic versioning once releases are cut.
 
+## [0.2.2] - 2026-06-25
+
+### Added
+
+- ECHO world-modeling support for tagged multi-turn trajectories, composing an
+  independently normalized ECHO SFT loss with the existing GiGPO action loss.
+- `echo_alpha` scheduling with constant and linear-taper-to-zero modes, plus
+  separate `loss_echo` and `echo_accuracy` diagnostics.
+- Real-Qwen smoke coverage for tagged ECHO batches on Qwen3-0.6B and
+  Qwen3.5-9B MLX 4-bit models.
+
 ## [0.2.1] - 2026-06-25
 
 ### Fixed
