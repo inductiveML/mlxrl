@@ -50,6 +50,10 @@ class StepMetrics:
     mean_ratio: float
     clip_fraction: float
     mean_reward: float
+    loss_action: float = 0.0
+    loss_echo: float = 0.0
+    echo_accuracy: float = 0.0
+    echo_alpha: float = 0.0
 
 
 def _slice_batch(batch: GRPOBatch, start: int, end: int) -> GRPOBatch:

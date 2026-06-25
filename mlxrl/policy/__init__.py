@@ -21,10 +21,14 @@ from mlxrl.policy.model import (
     strict_lora_config,
 )
 from mlxrl.policy.trajectory_logprobs import (
+    TaggedTrajectoryDualLogprobs,
+    TaggedTrajectoryLogprobs,
     TrajectoryDualLogprobs,
     TrajectoryLogprobs,
     trajectory_action_logprobs,
     trajectory_dual_logprobs,
+    trajectory_tagged_dual_logprobs,
+    trajectory_tagged_logprobs,
 )
 
 __all__ = [
@@ -34,6 +38,8 @@ __all__ = [
     "DualLogprobs",
     "LoRAConfig",
     "Phase0Report",
+    "TaggedTrajectoryDualLogprobs",
+    "TaggedTrajectoryLogprobs",
     "TrajectoryDualLogprobs",
     "TrajectoryLogprobs",
     "adapters_disabled",
@@ -48,4 +54,6 @@ __all__ = [
     "strict_lora_config",
     "trajectory_action_logprobs",
     "trajectory_dual_logprobs",
+    "trajectory_tagged_dual_logprobs",
+    "trajectory_tagged_logprobs",
 ]

@@ -38,6 +38,7 @@ from mlxrl.data.gsm8k import (
     format_gsm8k_prompt,
 )
 from mlxrl.data.rewards import accuracy_reward, format_reward
+from mlxrl.echo import EchoSchedule, EchoScheduleName
 from mlxrl.env import EnvFactory, RecurringStateTextEnv, SingleTurnRewardEnv
 from mlxrl.policy.logprobs import pad_token_id_from_tokenizer
 from mlxrl.policy.model import (
@@ -481,6 +482,9 @@ def _namespace_from_train_config(config: TrainConfig) -> argparse.Namespace:
         max_turns=config.max_turns,
         rollout_mode=config.rollout_mode,
         env_name=config.env_name,
+        echo_alpha=config.echo_alpha,
+        echo_schedule=config.echo_schedule,
+        echo_taper_steps=config.echo_taper_steps,
     )
 
 
@@ -500,6 +504,12 @@ def _apply_train_overrides(config: TrainConfig, args: argparse.Namespace) -> Tra
         replacements["seed"] = args.seed
     if args.output is not None:
         replacements["output"] = args.output
+    if args.echo_alpha is not None:
+        replacements["echo_alpha"] = args.echo_alpha
+    if args.echo_schedule is not None:
+        replacements["echo_schedule"] = args.echo_schedule
+    if args.echo_taper_steps is not None:
+        replacements["echo_taper_steps"] = args.echo_taper_steps
     if args.algorithm is not None:
         replacements["algorithm"] = replace(
             config.algorithm,
@@ -575,6 +585,11 @@ def _phase_agentic_train(config: TrainConfig) -> int:
     )
     algorithm = _trajectory_algorithm_from_config(config)
     env_factory = _env_factory_from_config(config)
+    echo_schedule = EchoSchedule(
+        alpha=config.echo_alpha,
+        schedule=cast(EchoScheduleName, config.echo_schedule),
+        taper_steps=config.echo_taper_steps,
+    )
     reward_history: list[float] = []
     kl_history: list[float] = []
     final_batch = None
@@ -604,6 +619,7 @@ def _phase_agentic_train(config: TrainConfig) -> int:
             use_checkpoint=config.gradient_checkpointing,
             compute_reference=config.kl_beta != 0.0,
         )
+        echo_alpha = echo_schedule.value(step)
         metrics = optimizer_step_trajectory(
             model=model,
             optimizer=optimizer,
@@ -613,6 +629,7 @@ def _phase_agentic_train(config: TrainConfig) -> int:
             algorithm=algorithm,
             use_checkpoint=config.gradient_checkpointing,
             micro_batch_size=config.micro_batch_size,
+            echo_alpha=echo_alpha,
         )
         reward_history.append(metrics.mean_reward)
         kl_history.append(metrics.kl)
@@ -624,6 +641,9 @@ def _phase_agentic_train(config: TrainConfig) -> int:
             f"kl={metrics.kl:.6f} "
             f"ratio={metrics.mean_ratio:.6f} "
             f"clip={metrics.clip_fraction:.6f} "
+            f"echo_alpha={metrics.echo_alpha:.6f} "
+            f"loss_echo={metrics.loss_echo:.6f} "
+            f"echo_acc={metrics.echo_accuracy:.6f} "
             f"loss={metrics.loss:.6f}",
             flush=True,
         )
@@ -645,7 +665,14 @@ def _phase_agentic_train(config: TrainConfig) -> int:
         old_policy_logprobs=final_batch.old_policy_logprobs,
         reference_logprobs=final_batch.reference_logprobs,
         action_mask=final_batch.action_mask,
+        echo_mask=(
+            final_batch.echo_mask
+            if final_batch.echo_mask is not None
+            else mx.zeros_like(final_batch.action_mask)
+        ),
         loss=mx.array(final_metrics.loss, dtype=mx.float32),
+        loss_echo=mx.array(final_metrics.loss_echo, dtype=mx.float32),
+        echo_accuracy=mx.array(final_metrics.echo_accuracy, dtype=mx.float32),
         kl=mx.array(final_metrics.kl, dtype=mx.float32),
     )
     print(f"reference_output: {output}")
@@ -881,6 +908,13 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--available-memory-gb", type=float, default=None)
     train.add_argument("--auto-fit", action="store_true")
     train.add_argument("--dry-run", action="store_true")
+    train.add_argument("--echo-alpha", type=float, default=None)
+    train.add_argument(
+        "--echo-schedule",
+        choices=["constant", "linear_taper_to_zero"],
+        default=None,
+    )
+    train.add_argument("--echo-taper-steps", type=int, default=None)
     train.set_defaults(func=_phase_train)
 
     phase2 = subparsers.add_parser(

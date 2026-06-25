@@ -58,6 +58,9 @@ max_turns = 3
 max_observation_len = 32
 rollout_mode = "parallel_per_turn"
 env_name = "recurring-text"
+echo_alpha = 0.025
+echo_schedule = "linear_taper_to_zero"
+echo_taper_steps = 10
 
 [algorithm]
 name = "gigpo"
@@ -74,6 +77,9 @@ gigpo_normalization = "center"
     assert config.algorithm.gigpo_gamma == 0.9
     assert config.algorithm.gigpo_normalization == "center"
     assert config.max_turns == 3
+    assert config.echo_alpha == 0.025
+    assert config.echo_schedule == "linear_taper_to_zero"
+    assert config.echo_taper_steps == 10
     assert effective_sequence_length(config) == 128 + 3 * 64 + 2 * 32
 
 
@@ -96,6 +102,12 @@ def test_train_config_rejects_invalid_multiturn_fields() -> None:
                 }
             }
         )
+    with pytest.raises(ConfigError, match="echo_alpha"):
+        TrainConfig.from_mapping({"echo_alpha": -0.1})
+    with pytest.raises(ConfigError, match="ECHO schedule"):
+        TrainConfig.from_mapping({"echo_schedule": "cosine"})
+    with pytest.raises(ConfigError, match="taper_steps"):
+        TrainConfig.from_mapping({"echo_schedule": "linear_taper_to_zero"})
 
 
 def test_train_config_rejects_empty_output() -> None:

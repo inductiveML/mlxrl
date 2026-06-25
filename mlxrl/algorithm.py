@@ -23,6 +23,9 @@ class AlgorithmLossMetrics:
     kl: mx.array
     mean_ratio: mx.array
     clip_fraction: mx.array
+    loss_action: mx.array | None = None
+    loss_echo: mx.array | None = None
+    echo_accuracy: mx.array | None = None
 
 
 class Algorithm(Protocol):

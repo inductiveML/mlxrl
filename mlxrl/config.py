@@ -7,7 +7,9 @@ import re
 import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+from mlxrl.echo import EchoSchedule, EchoScheduleName
 
 
 class ConfigError(ValueError):
@@ -107,6 +109,9 @@ class TrainConfig:
     iogpu_wired_limit_mb: int | None = None
     micro_batch_size: int = 0
     use_chat_template: bool = False
+    echo_alpha: float = 0.0
+    echo_schedule: str = "constant"
+    echo_taper_steps: int | None = None
     output: str = "reference_outputs/phase1_reference.npz"
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     sampling: SamplingConfigData = field(default_factory=SamplingConfigData)
@@ -147,6 +152,16 @@ class TrainConfig:
             raise ConfigError("iogpu_wired_limit_mb must be positive or null.")
         if self.micro_batch_size < 0:
             raise ConfigError("micro_batch_size must be non-negative.")
+        if self.echo_alpha < 0:
+            raise ConfigError("echo_alpha must be non-negative.")
+        try:
+            EchoSchedule(
+                alpha=self.echo_alpha,
+                schedule=cast(EchoScheduleName, self.echo_schedule),
+                taper_steps=self.echo_taper_steps,
+            )
+        except ValueError as error:
+            raise ConfigError(str(error)) from error
         validate_output_path(self.output)
         self.optimizer.validate()
         self.sampling.validate()

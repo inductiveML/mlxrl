@@ -275,6 +275,27 @@ currently exact for token-mean policy losses: base GRPO, DAPO, GSPO token mode,
 RLOO, and Dr. GRPO with `loss_reduction="token_mean"`. Sequence-reduced losses
 should keep `micro_batch_size=0`.
 
+## ECHO World Modeling
+
+ECHO is an additive GiGPO trainer feature for tagged multi-turn trajectories.
+Producer code may attach `token_roles` to each `Trajectory`, aligned to
+`full_token_ids`: `0 = MASKED`, `1 = ACTION`, `2 = ECHO`. ACTION tokens keep
+the normal GiGPO policy-gradient loss. ECHO tokens add an independently
+normalized SFT term, `alpha * NLL`, in the same forward/backward pass.
+
+`echo_alpha` defaults to `0.0`, which leaves current GiGPO behavior untouched.
+For early world-modeling, start small, roughly `0.005` to `0.05`, and consider
+`echo_schedule = "linear_taper_to_zero"` with `echo_taper_steps = N` so training
+returns to pure RL. `alpha` is model-size-sensitive; too-high values can
+overfit tool responses or collapse RL.
+
+ECHO is content-agnostic by design. `mlxrl` never inspects token text to decide
+what is an environment or tool response. The rollout producer owns the tags:
+MASKED tokens have zero gradient, ACTION tokens receive the RL advantage, and
+ECHO tokens receive only the SFT loss with no KL penalty or importance ratio.
+The trainer logs `loss_echo` and token-level `echo_acc` separately from the
+ACTION loss.
+
 ## Policy Semantics
 
 - The base model is frozen before LoRA injection.

@@ -6,6 +6,8 @@ from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from mlxrl.echo import ACTION, MASKED, VALID_TOKEN_ROLES
+
 
 @dataclass(frozen=True)
 class ActionSpan:
@@ -62,6 +64,8 @@ class Trajectory:
     steps: tuple[TrajectoryStep, ...]
     done: bool
     truncated: bool = False
+    token_roles: tuple[int, ...] | None = None
+    token_advantages: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.task_index < 0:
@@ -73,6 +77,14 @@ class Trajectory:
         if len(self.full_token_ids) < 2:
             raise ValueError("A trajectory needs at least two tokens for logprobs.")
         token_count = len(self.full_token_ids)
+        if self.token_roles is not None:
+            if len(self.token_roles) != token_count:
+                raise ValueError("token_roles must align to full_token_ids.")
+            invalid_roles = sorted(set(self.token_roles).difference(VALID_TOKEN_ROLES))
+            if invalid_roles:
+                raise ValueError(f"token_roles contains invalid roles: {invalid_roles}.")
+        if self.token_advantages is not None and len(self.token_advantages) != token_count:
+            raise ValueError("token_advantages must align to full_token_ids.")
         for span, step in zip(self.action_spans, self.steps, strict=True):
             if span.end > token_count:
                 raise ValueError("Action span extends past the trajectory token sequence.")
@@ -92,6 +104,17 @@ class Trajectory:
         for span in self.action_spans:
             tokens.extend(self.full_token_ids[span.start : span.end])
         return tuple(tokens)
+
+    def token_roles_or_default(self) -> tuple[int, ...]:
+        """Return producer-supplied roles or the legacy action-only mask."""
+
+        if self.token_roles is not None:
+            return self.token_roles
+        roles = [MASKED] * len(self.full_token_ids)
+        for span in self.action_spans:
+            for index in range(span.start, span.end):
+                roles[index] = ACTION
+        return tuple(roles)
 
     def discounted_returns_to_go(self, gamma: float) -> tuple[float, ...]:
         if gamma < 0:
