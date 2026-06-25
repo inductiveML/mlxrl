@@ -264,13 +264,6 @@ def generate_from_prefix_cache(
         min_p=config.min_p,
         top_k=config.top_k,
     )
-    cache: list[Any]
-    if compile_decode_step:
-        cache = fixed_decode_cache_from_prefix(prefix.cache, config.max_tokens)
-        decode_logprobs = _compiled_decode_logprobs(model, cache)
-    else:
-        cache = clone_prompt_cache(prefix.cache)
-        decode_logprobs = _decode_logprobs(model, cache)
     completion: list[int] = []
     old_policy_logprobs: list[float] = []
 
@@ -289,6 +282,14 @@ def generate_from_prefix_cache(
             tuple(old_policy_logprobs),
             decode_completion(tokenizer, completion),
         )
+
+    cache: list[Any]
+    if compile_decode_step:
+        cache = fixed_decode_cache_from_prefix(prefix.cache, config.max_tokens)
+        decode_logprobs = _compiled_decode_logprobs(model, cache)
+    else:
+        cache = clone_prompt_cache(prefix.cache)
+        decode_logprobs = _decode_logprobs(model, cache)
 
     current = next_token
     for _ in range(1, config.max_tokens):

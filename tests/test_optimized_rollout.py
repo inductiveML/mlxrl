@@ -12,6 +12,7 @@ from mlxrl.rollout.optimized import (
     PrefixCache,
     _completion_major_draw_keys,
     _set_random_state,
+    generate_from_prefix_cache,
     generate_prompt_set_from_prefix_caches,
 )
 
@@ -83,6 +84,39 @@ def test_fixed_kv_cache_updates_rows_at_dynamic_offsets() -> None:
     assert updated_values[0, 0, 1].tolist() == [5.0, 6.0]
     assert updated_values[1, 0, 2].tolist() == [7.0, 8.0]
     assert mask.shape == (2, 1, 1, 4)
+
+
+@pytest.mark.parametrize("compile_decode_step", [False, True])
+def test_single_rollout_first_token_eos_does_not_allocate_decode_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    compile_decode_step: bool,
+) -> None:
+    prefix = PrefixCache(
+        cache=[],
+        first_logprobs=mx.array([[0.0, -10.0]], dtype=mx.float32),
+    )
+
+    def fail_cache_allocation(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise AssertionError("first-token EOS should not allocate decode cache")
+
+    monkeypatch.setattr(optimized_module, "clone_prompt_cache", fail_cache_allocation)
+    monkeypatch.setattr(
+        optimized_module,
+        "fixed_decode_cache_from_prefix",
+        fail_cache_allocation,
+    )
+
+    output = generate_from_prefix_cache(
+        model=object(),  # type: ignore[arg-type]
+        tokenizer=ToyTokenizer(),
+        prefix=prefix,
+        config=SamplingConfig(max_tokens=4, temperature=0.0),
+        eos_token_ids=frozenset({0}),
+        compile_decode_step=compile_decode_step,
+    )
+
+    assert output == ((0,), (0.0,), "0")
 
 
 def test_greedy_batched_rollout_returns_first_token_eos_without_fallback(
