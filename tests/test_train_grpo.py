@@ -11,6 +11,7 @@ from mlx.utils import tree_flatten
 
 import mlxrl.algo.grpo as grpo_module
 from mlxrl.algo.grpo import DAPOAlgorithm, GRPOAlgorithm, GSPOAlgorithm
+from mlxrl.policy.logprobs import prepare_completion_logprob_inputs
 from mlxrl.train.grpo import GRPOBatch, grpo_metrics_from_batch, optimizer_step
 
 pytestmark = pytest.mark.metal
@@ -124,6 +125,43 @@ def test_grpo_metrics_skips_kl_for_dummy_reference_beta_zero(
     assert float(metrics.kl.item()) == 0.0
 
 
+def test_grpo_metrics_accepts_prepared_logprob_inputs() -> None:
+    model = _model()
+    batch = _batch()
+    prepared_batch = replace(
+        batch,
+        logprob_inputs=prepare_completion_logprob_inputs(
+            batch.prompt_token_ids,
+            batch.completion_token_ids,
+            pad_token_id=0,
+        ),
+    )
+
+    direct = grpo_metrics_from_batch(
+        model,
+        batch,
+        beta=0.04,
+        pad_token_id=0,
+        algorithm=GRPOAlgorithm(),
+    )
+    prepared = grpo_metrics_from_batch(
+        model,
+        prepared_batch,
+        beta=0.04,
+        pad_token_id=0,
+        algorithm=GRPOAlgorithm(),
+    )
+    errors = (
+        mx.abs(direct.loss - prepared.loss),
+        mx.abs(direct.policy_gradient_loss - prepared.policy_gradient_loss),
+        mx.abs(direct.kl - prepared.kl),
+        mx.abs(direct.mean_ratio - prepared.mean_ratio),
+    )
+    mx.eval(*errors)  # Test sync: materialize prepared/direct metrics comparison.
+
+    assert max(float(error.item()) for error in errors) < 1e-6
+
+
 def test_optimizer_step_rejects_micro_batching_for_sequence_reductions() -> None:
     model = _model()
     optimizer = optim.SGD(learning_rate=0.01)
@@ -150,6 +188,11 @@ def test_dapo_filter_batch_drops_zero_advantage_groups() -> None:
         reference_logprobs=mx.zeros((4, 1), dtype=mx.float32),
         mask=mx.ones((4, 1), dtype=mx.float32),
         reference_is_policy=True,
+        logprob_inputs=prepare_completion_logprob_inputs(
+            ((1,), (1,), (2,), (2,)),
+            ((3,), (4,), (5,), (6,)),
+            pad_token_id=0,
+        ),
     )
 
     filtered = DAPOAlgorithm(dynamic_sampling=True).filter_batch(
@@ -167,3 +210,5 @@ def test_dapo_filter_batch_drops_zero_advantage_groups() -> None:
     assert filtered.rewards.tolist() == [1.0, 0.0]
     assert filtered.advantages.tolist() == [1.0, -1.0]
     assert filtered.reference_is_policy is True
+    assert filtered.logprob_inputs is not None
+    assert filtered.logprob_inputs.input_ids.tolist() == [[2], [2]]

@@ -9,8 +9,10 @@ import pytest
 from mlxrl.algo.grpo import GRPOAlgorithm
 from mlxrl.policy.logprobs import (
     completion_logprobs,
+    completion_logprobs_from_inputs,
     dual_logprobs,
     prefix_cached_completion_logprobs,
+    prepare_completion_logprob_inputs,
     target_logprobs_from_logits,
 )
 from mlxrl.rollout.naive import Completion, SamplingConfig
@@ -130,6 +132,25 @@ def test_prefix_cached_completion_logprobs_match_full_forward_on_toy_model() -> 
     assert float(max_error.item()) < 1e-6
     assert float(mask_error.item()) == 0.0
     assert model.cached_call_shapes == [(1, 2), (2, 2)]
+
+
+def test_completion_logprobs_from_prepared_inputs_matches_public_helper() -> None:
+    model = ToyCachedModel()
+    prompts = ((2, 3, 4), (9, 8))
+    completions = ((5, 6), (7,))
+
+    prepared = prepare_completion_logprob_inputs(prompts, completions, pad_token_id=0)
+    from_prepared = completion_logprobs_from_inputs(model, prepared)
+    direct = completion_logprobs(model, prompts, completions, pad_token_id=0)
+    max_error = mx.max(mx.abs(from_prepared.logprobs - direct.logprobs))
+    mask_error = mx.max(mx.abs(from_prepared.mask - direct.mask))
+    mx.eval(  # Test sync: materialize prepared/direct logprob comparison.
+        max_error,
+        mask_error,
+    )
+
+    assert float(max_error.item()) < 1e-6
+    assert float(mask_error.item()) == 0.0
 
 
 def test_rollout_captured_logprobs_match_completion_forward_on_toy_model() -> None:
@@ -254,4 +275,5 @@ def test_batch_from_rollouts_recomputes_old_policy_logprobs() -> None:
     mx.eval(max_error)  # Test sync: materialize recomputed old-policy comparison.
     assert float(max_error.item()) < 1e-6
     assert batch.mask.tolist() == [[1.0, 1.0], [1.0, 0.0]]
+    assert batch.logprob_inputs is not None
     assert model.cached_call_shapes == [(1, 2), (2, 2)]

@@ -507,6 +507,14 @@ def filter_zero_advantage_groups(batch: Any, group_size: int) -> Any:
     }
     if hasattr(batch, "reference_is_policy"):
         filtered["reference_is_policy"] = batch.reference_is_policy
+    logprob_inputs = getattr(batch, "logprob_inputs", None)
+    if logprob_inputs is not None:
+        filtered["logprob_inputs"] = type(logprob_inputs)(
+            input_ids=logprob_inputs.input_ids[indices],
+            target_ids=logprob_inputs.target_ids[indices],
+            gather_indices=logprob_inputs.gather_indices[indices],
+            mask=logprob_inputs.mask[indices],
+        )
     return type(batch)(**filtered)
 
 

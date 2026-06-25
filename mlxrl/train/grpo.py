@@ -13,9 +13,12 @@ from mlx.utils import tree_map
 
 from mlxrl.algorithm import Algorithm, AlgorithmLossMetrics
 from mlxrl.policy.logprobs import (
+    CompletionLogprobInputs,
     CompletionLogprobs,
     completion_logprobs,
+    completion_logprobs_from_inputs,
     dual_logprobs,
+    prepare_completion_logprob_inputs,
 )
 from mlxrl.policy.model import enable_grad_checkpointing
 from mlxrl.rollout.naive import Completion
@@ -33,6 +36,7 @@ class GRPOBatch:
     reference_logprobs: mx.array
     mask: mx.array
     reference_is_policy: bool = False
+    logprob_inputs: CompletionLogprobInputs | None = None
 
 
 @dataclass(frozen=True)
@@ -54,6 +58,11 @@ def _slice_batch(batch: GRPOBatch, start: int, end: int) -> GRPOBatch:
     if not completion_token_ids:
         raise ValueError("Cannot slice an empty micro-batch.")
     width = max(len(completion) for completion in completion_token_ids)
+    logprob_inputs = (
+        _slice_logprob_inputs(batch.logprob_inputs, batch, start, end, width)
+        if batch.logprob_inputs is not None
+        else None
+    )
     return GRPOBatch(
         prompt_token_ids=batch.prompt_token_ids[start:end],
         completion_token_ids=completion_token_ids,
@@ -63,6 +72,7 @@ def _slice_batch(batch: GRPOBatch, start: int, end: int) -> GRPOBatch:
         reference_logprobs=batch.reference_logprobs[start:end, :width],
         mask=batch.mask[start:end, :width],
         reference_is_policy=batch.reference_is_policy,
+        logprob_inputs=logprob_inputs,
     )
 
 
@@ -70,6 +80,31 @@ def _completion_token_count(batch: GRPOBatch) -> int:
     """Count valid completion tokens from host-side rollout metadata."""
 
     return sum(len(completion) for completion in batch.completion_token_ids)
+
+
+def _slice_logprob_inputs(
+    inputs: CompletionLogprobInputs,
+    batch: GRPOBatch,
+    start: int,
+    end: int,
+    completion_width: int,
+) -> CompletionLogprobInputs:
+    """Slice and trim prepared full-forward tensors for one micro-batch."""
+
+    target_width = max(
+        len(prompt) + len(completion) - 1
+        for prompt, completion in zip(
+            batch.prompt_token_ids[start:end],
+            batch.completion_token_ids[start:end],
+            strict=True,
+        )
+    )
+    return CompletionLogprobInputs(
+        input_ids=inputs.input_ids[start:end, :target_width],
+        target_ids=inputs.target_ids[start:end, :target_width],
+        gather_indices=inputs.gather_indices[start:end, :completion_width],
+        mask=inputs.mask[start:end, :completion_width],
+    )
 
 
 def batch_from_rollouts(
@@ -92,6 +127,11 @@ def batch_from_rollouts(
         enable_grad_checkpointing(model)
     prompt_token_ids = tuple(completion.prompt_tokens for completion in completions)
     completion_token_ids = tuple(completion.completion_tokens for completion in completions)
+    logprob_inputs = prepare_completion_logprob_inputs(
+        prompt_token_ids,
+        completion_token_ids,
+        pad_token_id=pad_token_id,
+    )
     dual = dual_logprobs(
         model,
         prompt_token_ids,
@@ -99,6 +139,7 @@ def batch_from_rollouts(
         pad_token_id,
         use_checkpoint=use_checkpoint,
         compute_reference=compute_reference,
+        prepared_inputs=logprob_inputs,
     )
     mx.eval(  # Logprob sync: freeze old-policy/ref logprobs before adapter mutation.
         dual.policy,
@@ -116,6 +157,7 @@ def batch_from_rollouts(
         reference_logprobs=mx.stop_gradient(dual.reference),
         mask=dual.mask,
         reference_is_policy=not compute_reference,
+        logprob_inputs=logprob_inputs,
     )
     return algorithm.filter_batch(batch, group_structure=group_size)
 
@@ -163,12 +205,20 @@ def grpo_metrics_from_batch(
 
     if use_checkpoint:
         enable_grad_checkpointing(model)
-    current = completion_logprobs(
-        model,
-        batch.prompt_token_ids,
-        batch.completion_token_ids,
-        pad_token_id,
-        use_checkpoint=use_checkpoint,
+    current = (
+        completion_logprobs_from_inputs(
+            model,
+            batch.logprob_inputs,
+            use_checkpoint=use_checkpoint,
+        )
+        if batch.logprob_inputs is not None
+        else completion_logprobs(
+            model,
+            batch.prompt_token_ids,
+            batch.completion_token_ids,
+            pad_token_id,
+            use_checkpoint=use_checkpoint,
+        )
     )
     reference_logprobs = (
         current.logprobs

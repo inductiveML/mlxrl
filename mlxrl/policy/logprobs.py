@@ -28,6 +28,16 @@ class CompletionLogprobs:
 
 
 @dataclass(frozen=True)
+class CompletionLogprobInputs:
+    """Prepared padded tensors for a completion full-forward logprob pass."""
+
+    input_ids: mx.array
+    target_ids: mx.array
+    gather_indices: mx.array
+    mask: mx.array
+
+
+@dataclass(frozen=True)
 class DualLogprobs:
     """Policy and reference logprobs for the same completion tokens."""
 
@@ -60,6 +70,25 @@ def completion_logprobs(
     use_checkpoint: bool = False,
 ) -> CompletionLogprobs:
     """Gather logprobs assigned to completion tokens in a full forward pass."""
+
+    inputs = prepare_completion_logprob_inputs(
+        prompt_token_ids,
+        completion_token_ids,
+        pad_token_id=pad_token_id,
+    )
+    return completion_logprobs_from_inputs(
+        model,
+        inputs,
+        use_checkpoint=use_checkpoint,
+    )
+
+
+def prepare_completion_logprob_inputs(
+    prompt_token_ids: Sequence[Sequence[int]],
+    completion_token_ids: Sequence[Sequence[int]],
+    pad_token_id: int = 0,
+) -> CompletionLogprobInputs:
+    """Build reusable padded tensors for completion logprob gathering."""
 
     if len(prompt_token_ids) != len(completion_token_ids):
         raise ValueError("prompt_token_ids and completion_token_ids must have the same length.")
@@ -112,22 +141,37 @@ def completion_logprobs(
 
     input_ids = mx.array(input_rows, dtype=mx.int32)
     target_ids = mx.array(target_rows, dtype=mx.int32)
-    logits = _completion_forward(model, input_ids, use_checkpoint=use_checkpoint)
-    target_logprobs = target_logprobs_from_logits(logits, target_ids)
     gather_indices = mx.array(gather_index_rows, dtype=mx.int32)
     mask = mx.array(completion_mask_rows, dtype=mx.float32)
+    return CompletionLogprobInputs(
+        input_ids=input_ids,
+        target_ids=target_ids,
+        gather_indices=gather_indices,
+        mask=mask,
+    )
+
+
+def completion_logprobs_from_inputs(
+    model: nn.Module,
+    inputs: CompletionLogprobInputs,
+    use_checkpoint: bool = False,
+) -> CompletionLogprobs:
+    """Gather completion-token logprobs from prebuilt full-forward tensors."""
+
+    logits = _completion_forward(model, inputs.input_ids, use_checkpoint=use_checkpoint)
+    target_logprobs = target_logprobs_from_logits(logits, inputs.target_ids)
     completion_logprob_values = mx.take_along_axis(
         target_logprobs,
-        gather_indices,
+        inputs.gather_indices,
         axis=1,
     )
-    completion_logprob_values = completion_logprob_values * mask.astype(
+    completion_logprob_values = completion_logprob_values * inputs.mask.astype(
         completion_logprob_values.dtype
     )
 
     return CompletionLogprobs(
         logprobs=completion_logprob_values,
-        mask=mask,
+        mask=inputs.mask,
     )
 
 
@@ -208,16 +252,24 @@ def dual_logprobs(
     pad_token_id: int = 0,
     use_checkpoint: bool = False,
     compute_reference: bool = True,
+    prepared_inputs: CompletionLogprobInputs | None = None,
 ) -> DualLogprobs:
     """Compute policy logprobs and reference logprobs using one model object."""
 
-    policy = completion_logprobs(
-        model,
-        prompt_token_ids,
-        completion_token_ids,
-        pad_token_id,
-        use_checkpoint=use_checkpoint,
-    )
+    if prepared_inputs is None:
+        policy = completion_logprobs(
+            model,
+            prompt_token_ids,
+            completion_token_ids,
+            pad_token_id,
+            use_checkpoint=use_checkpoint,
+        )
+    else:
+        policy = completion_logprobs_from_inputs(
+            model,
+            prepared_inputs,
+            use_checkpoint=use_checkpoint,
+        )
     if not compute_reference:
         return DualLogprobs(
             policy=policy.logprobs,
