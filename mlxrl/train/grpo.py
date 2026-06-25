@@ -20,7 +20,7 @@ from mlxrl.policy.logprobs import (
     dual_logprobs,
     prepare_completion_logprob_inputs,
 )
-from mlxrl.policy.model import enable_grad_checkpointing
+from mlxrl.policy.model import enable_grad_checkpointing, temporary_eval_mode
 from mlxrl.rollout.naive import Completion
 from mlxrl.train.reference import reference_logprobs_for_loss
 
@@ -133,26 +133,27 @@ def batch_from_rollouts(
         completion_token_ids,
         pad_token_id=pad_token_id,
     )
-    dual = dual_logprobs(
-        model,
-        prompt_token_ids,
-        completion_token_ids,
-        pad_token_id,
-        use_checkpoint=use_checkpoint,
-        compute_reference=compute_reference,
-        prepared_inputs=logprob_inputs,
-    )
-    if compute_reference:
-        mx.eval(  # Logprob sync: freeze old-policy/ref logprobs before adapter mutation.
-            dual.policy,
-            dual.reference,
-            dual.mask,
+    with temporary_eval_mode(model):
+        dual = dual_logprobs(
+            model,
+            prompt_token_ids,
+            completion_token_ids,
+            pad_token_id,
+            use_checkpoint=use_checkpoint,
+            compute_reference=compute_reference,
+            prepared_inputs=logprob_inputs,
         )
-    else:
-        mx.eval(  # Logprob sync: freeze old-policy logprobs before adapter mutation.
-            dual.policy,
-            dual.mask,
-        )
+        if compute_reference:
+            mx.eval(  # Logprob sync: freeze old-policy/ref logprobs before adapter mutation.
+                dual.policy,
+                dual.reference,
+                dual.mask,
+            )
+        else:
+            mx.eval(  # Logprob sync: freeze old-policy logprobs before adapter mutation.
+                dual.policy,
+                dual.mask,
+            )
     reward_array = mx.array(list(rewards), dtype=mx.float32)
     advantages = algorithm.compute_advantages(reward_array, group_structure=group_size)
     batch = GRPOBatch(

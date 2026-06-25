@@ -12,7 +12,13 @@ from mlx.utils import tree_flatten
 import mlxrl.algo.grpo as grpo_module
 from mlxrl.algo.grpo import DAPOAlgorithm, GRPOAlgorithm, GSPOAlgorithm
 from mlxrl.policy.logprobs import prepare_completion_logprob_inputs
-from mlxrl.train.grpo import GRPOBatch, grpo_metrics_from_batch, optimizer_step
+from mlxrl.rollout.naive import Completion
+from mlxrl.train.grpo import (
+    GRPOBatch,
+    batch_from_rollouts,
+    grpo_metrics_from_batch,
+    optimizer_step,
+)
 
 pytestmark = pytest.mark.metal
 
@@ -25,6 +31,16 @@ class TinyPolicy(nn.Module):
 
     def __call__(self, tokens: mx.array) -> mx.array:
         return self.proj(self.embedding(tokens))
+
+
+class ModeRecordingPolicy(TinyPolicy):
+    def __init__(self) -> None:
+        super().__init__()
+        self.call_training_modes: list[bool] = []
+
+    def __call__(self, tokens: mx.array) -> mx.array:
+        self.call_training_modes.append(bool(self.training))
+        return super().__call__(tokens)
 
 
 def _model(seed: int = 11) -> TinyPolicy:
@@ -137,6 +153,32 @@ def test_grpo_metrics_rejects_dummy_reference_with_nonzero_beta() -> None:
             pad_token_id=0,
             algorithm=GRPOAlgorithm(),
         )
+
+
+def test_batch_from_rollouts_uses_eval_mode_and_restores_train_mode() -> None:
+    model = ModeRecordingPolicy()
+    model.train()
+    completions = (
+        Completion(0, 0, (1, 2), (3, 4), (), "a"),
+        Completion(0, 1, (1, 2), (5,), (), "b"),
+    )
+
+    batch = batch_from_rollouts(
+        model,
+        completions,
+        rewards=(1.0, 0.0),
+        group_size=2,
+        pad_token_id=0,
+        algorithm=GRPOAlgorithm(),
+        compute_reference=False,
+    )
+
+    assert model.call_training_modes == [False]
+    assert model.training is True
+    mx.eval(  # Test sync: materialize batch logprobs after mode restoration.
+        batch.old_policy_logprobs,
+        batch.mask,
+    )
 
 
 def test_grpo_metrics_accepts_prepared_logprob_inputs() -> None:

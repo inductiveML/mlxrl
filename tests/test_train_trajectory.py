@@ -32,6 +32,16 @@ class TinyPolicy(nn.Module):
         return self.proj(self.embedding(tokens))
 
 
+class ModeRecordingPolicy(TinyPolicy):
+    def __init__(self) -> None:
+        super().__init__()
+        self.call_training_modes: list[bool] = []
+
+    def __call__(self, tokens: mx.array) -> mx.array:
+        self.call_training_modes.append(bool(self.training))
+        return super().__call__(tokens)
+
+
 def _model(seed: int = 21) -> TinyPolicy:
     mx.random.seed(seed)
     return TinyPolicy()
@@ -238,3 +248,39 @@ def test_trajectory_metrics_rejects_dummy_reference_with_nonzero_beta() -> None:
             pad_token_id=0,
             algorithm=algorithm,
         )
+
+
+def test_batch_from_trajectories_uses_eval_mode_and_restores_train_mode() -> None:
+    completions, rewards = _single_turn_data()
+    trajectories = tuple(
+        trajectory_from_single_turn(
+            task_index=completion.prompt_index,
+            group_index=completion.group_index,
+            task="prompt",
+            prompt_tokens=completion.prompt_tokens,
+            completion_tokens=completion.completion_tokens,
+            completion_text=completion.text,
+            reward=reward,
+            state_id=("prompt", completion.prompt_index),
+        )
+        for completion, reward in zip(completions, rewards, strict=True)
+    )
+    algorithm = GiGPOAlgorithm(omega=0.0)
+    model = ModeRecordingPolicy()
+    model.train()
+
+    batch = batch_from_trajectories(
+        model,
+        trajectories,
+        group_size=2,
+        pad_token_id=0,
+        algorithm=algorithm,
+        compute_reference=False,
+    )
+
+    assert model.call_training_modes == [False]
+    assert model.training is True
+    mx.eval(  # Test sync: materialize trajectory logprobs after mode restoration.
+        batch.old_policy_logprobs,
+        batch.action_mask,
+    )

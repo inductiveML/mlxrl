@@ -6,7 +6,8 @@ per-layer checkpoint helpers (MIT, Copyright Apple Inc.).
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -150,6 +151,20 @@ def enable_grad_checkpointing(model: nn.Module) -> bool:
     grad_checkpoint(layers[0])
     layer_type_any._mlxrl_grad_checkpoint_enabled = True
     return True
+
+
+@contextmanager
+def temporary_eval_mode(model: nn.Module) -> Iterator[None]:
+    """Run non-gradient work in eval mode, then restore the caller's mode."""
+
+    was_training = bool(getattr(model, "training", False))
+    if was_training:
+        model.eval()
+    try:
+        yield
+    finally:
+        if was_training:
+            model.train()
 
 
 def inject_lora_adapters(model: nn.Module, config: LoRAConfig) -> tuple[str, ...]:

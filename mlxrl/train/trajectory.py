@@ -12,7 +12,7 @@ import mlx.optimizers as optim
 from mlx.utils import tree_map
 
 from mlxrl.algorithm import AlgorithmLossMetrics, TrajectoryAlgorithm
-from mlxrl.policy.model import enable_grad_checkpointing
+from mlxrl.policy.model import enable_grad_checkpointing, temporary_eval_mode
 from mlxrl.policy.trajectory_logprobs import (
     trajectory_action_logprobs,
     trajectory_dual_logprobs,
@@ -52,24 +52,25 @@ def batch_from_trajectories(
     if use_checkpoint:
         enable_grad_checkpointing(model)
     trajectory_tuple = tuple(trajectories)
-    dual = trajectory_dual_logprobs(
-        model,
-        trajectory_tuple,
-        pad_token_id=pad_token_id,
-        use_checkpoint=use_checkpoint,
-        compute_reference=compute_reference,
-    )
-    if compute_reference:
-        mx.eval(  # Logprob sync: freeze old-policy/ref trajectory logprobs before mutation.
-            dual.policy,
-            dual.reference,
-            dual.mask,
+    with temporary_eval_mode(model):
+        dual = trajectory_dual_logprobs(
+            model,
+            trajectory_tuple,
+            pad_token_id=pad_token_id,
+            use_checkpoint=use_checkpoint,
+            compute_reference=compute_reference,
         )
-    else:
-        mx.eval(  # Logprob sync: freeze old-policy trajectory logprobs before mutation.
-            dual.policy,
-            dual.mask,
-        )
+        if compute_reference:
+            mx.eval(  # Logprob sync: freeze old-policy/ref trajectory logprobs before mutation.
+                dual.policy,
+                dual.reference,
+                dual.mask,
+            )
+        else:
+            mx.eval(  # Logprob sync: freeze old-policy trajectory logprobs before mutation.
+                dual.policy,
+                dual.mask,
+            )
     step_advantages = tuple(
         float(value)
         for value in algorithm.compute_step_advantages(
