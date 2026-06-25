@@ -494,17 +494,20 @@ def filter_zero_advantage_groups(batch: Any, group_size: int) -> Any:
         raise ValueError("DAPO dynamic sampling dropped every group.")
 
     indices = mx.array(keep_indices, dtype=mx.int32)
-    return type(batch)(
-        prompt_token_ids=tuple(batch.prompt_token_ids[index] for index in keep_indices),
-        completion_token_ids=tuple(
+    filtered = {
+        "prompt_token_ids": tuple(batch.prompt_token_ids[index] for index in keep_indices),
+        "completion_token_ids": tuple(
             batch.completion_token_ids[index] for index in keep_indices
         ),
-        rewards=batch.rewards[indices],
-        advantages=batch.advantages[indices],
-        old_policy_logprobs=batch.old_policy_logprobs[indices],
-        reference_logprobs=batch.reference_logprobs[indices],
-        mask=batch.mask[indices],
-    )
+        "rewards": batch.rewards[indices],
+        "advantages": batch.advantages[indices],
+        "old_policy_logprobs": batch.old_policy_logprobs[indices],
+        "reference_logprobs": batch.reference_logprobs[indices],
+        "mask": batch.mask[indices],
+    }
+    if hasattr(batch, "reference_is_policy"):
+        filtered["reference_is_policy"] = batch.reference_is_policy
+    return type(batch)(**filtered)
 
 
 def _token_loss_metrics(
@@ -518,9 +521,12 @@ def _token_loss_metrics(
 ) -> AlgorithmLossMetrics:
     mask = mask.astype(mx.float32)
     denominator = mx.maximum(mx.sum(mask), mx.array(1.0, dtype=mx.float32))
-    token_kl = approximate_kl(policy_logprobs, reference_logprobs)
     policy_gradient_loss = mx.sum(token_policy_gradient * mask) / denominator
-    kl = mx.sum(token_kl * mask) / denominator
+    if beta == 0.0 and reference_logprobs is policy_logprobs:
+        kl = mx.array(0.0, dtype=mx.float32)
+    else:
+        token_kl = approximate_kl(policy_logprobs, reference_logprobs)
+        kl = mx.sum(token_kl * mask) / denominator
     mean_ratio = mx.sum(ratio * mask) / denominator
     if clipped_ratio is None:
         clip_fraction = mx.array(0.0, dtype=mx.float32)

@@ -32,6 +32,7 @@ class GRPOBatch:
     old_policy_logprobs: mx.array
     reference_logprobs: mx.array
     mask: mx.array
+    reference_is_policy: bool = False
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,7 @@ def _slice_batch(batch: GRPOBatch, start: int, end: int) -> GRPOBatch:
         old_policy_logprobs=batch.old_policy_logprobs[start:end, :width],
         reference_logprobs=batch.reference_logprobs[start:end, :width],
         mask=batch.mask[start:end, :width],
+        reference_is_policy=batch.reference_is_policy,
     )
 
 
@@ -113,6 +115,7 @@ def batch_from_rollouts(
         old_policy_logprobs=mx.stop_gradient(dual.policy),
         reference_logprobs=mx.stop_gradient(dual.reference),
         mask=dual.mask,
+        reference_is_policy=not compute_reference,
     )
     return algorithm.filter_batch(batch, group_structure=group_size)
 
@@ -167,10 +170,15 @@ def grpo_metrics_from_batch(
         pad_token_id,
         use_checkpoint=use_checkpoint,
     )
+    reference_logprobs = (
+        current.logprobs
+        if beta == 0.0 and batch.reference_is_policy
+        else batch.reference_logprobs
+    )
     return algorithm.compute_loss(
         policy_logprobs=current.logprobs,
         old_policy_logprobs=batch.old_policy_logprobs,
-        reference_logprobs=batch.reference_logprobs,
+        reference_logprobs=reference_logprobs,
         advantages=batch.advantages,
         completion_mask=batch.mask,
         beta=beta,

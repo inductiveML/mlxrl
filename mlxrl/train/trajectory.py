@@ -32,6 +32,7 @@ class TrajectoryBatch:
     old_policy_logprobs: mx.array
     reference_logprobs: mx.array
     action_mask: mx.array
+    reference_is_policy: bool = False
 
 
 def batch_from_trajectories(
@@ -81,6 +82,7 @@ def batch_from_trajectories(
         old_policy_logprobs=mx.stop_gradient(dual.policy),
         reference_logprobs=mx.stop_gradient(dual.reference),
         action_mask=dual.mask,
+        reference_is_policy=not compute_reference,
     )
     return cast(TrajectoryBatch, algorithm.filter_batch(batch, group_structure=group_size))
 
@@ -103,10 +105,15 @@ def trajectory_metrics_from_batch(
         pad_token_id=pad_token_id,
         use_checkpoint=use_checkpoint,
     )
+    reference_logprobs = (
+        current.logprobs
+        if beta == 0.0 and batch.reference_is_policy
+        else batch.reference_logprobs
+    )
     return algorithm.compute_loss(
         policy_logprobs=current.logprobs,
         old_policy_logprobs=batch.old_policy_logprobs,
-        reference_logprobs=batch.reference_logprobs,
+        reference_logprobs=reference_logprobs,
         advantages=batch.advantages,
         action_mask=batch.action_mask,
         beta=beta,
@@ -265,6 +272,7 @@ def _slice_trajectory_batch(
         old_policy_logprobs=batch.old_policy_logprobs[start:end, :width],
         reference_logprobs=batch.reference_logprobs[start:end, :width],
         action_mask=batch.action_mask[start:end, :width],
+        reference_is_policy=batch.reference_is_policy,
     )
 
 

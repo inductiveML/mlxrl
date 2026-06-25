@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, cast
 
 import mlx.core as mx
@@ -8,8 +9,9 @@ import mlx.optimizers as optim
 import pytest
 from mlx.utils import tree_flatten
 
+import mlxrl.algo.grpo as grpo_module
 from mlxrl.algo.grpo import DAPOAlgorithm, GRPOAlgorithm, GSPOAlgorithm
-from mlxrl.train.grpo import GRPOBatch, optimizer_step
+from mlxrl.train.grpo import GRPOBatch, grpo_metrics_from_batch, optimizer_step
 
 pytestmark = pytest.mark.metal
 
@@ -98,6 +100,30 @@ def test_optimizer_step_micro_batch_matches_whole_batch_token_mean() -> None:
     assert max(float(error.item()) for error in param_errors) < 1e-6
 
 
+def test_grpo_metrics_skips_kl_for_dummy_reference_beta_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _model()
+    batch = replace(_batch(), reference_is_policy=True)
+
+    def fail_kl(policy_logprobs: mx.array, reference_logprobs: mx.array) -> mx.array:
+        del policy_logprobs, reference_logprobs
+        raise AssertionError("dummy-reference beta-zero path should not compute KL")
+
+    monkeypatch.setattr(grpo_module, "approximate_kl", fail_kl)
+
+    metrics = grpo_metrics_from_batch(
+        model,
+        batch,
+        beta=0.0,
+        pad_token_id=0,
+        algorithm=GRPOAlgorithm(),
+    )
+    mx.eval(metrics.loss, metrics.kl)  # Test sync: materialize beta-zero fast path.
+
+    assert float(metrics.kl.item()) == 0.0
+
+
 def test_optimizer_step_rejects_micro_batching_for_sequence_reductions() -> None:
     model = _model()
     optimizer = optim.SGD(learning_rate=0.01)
@@ -123,6 +149,7 @@ def test_dapo_filter_batch_drops_zero_advantage_groups() -> None:
         old_policy_logprobs=mx.zeros((4, 1), dtype=mx.float32),
         reference_logprobs=mx.zeros((4, 1), dtype=mx.float32),
         mask=mx.ones((4, 1), dtype=mx.float32),
+        reference_is_policy=True,
     )
 
     filtered = DAPOAlgorithm(dynamic_sampling=True).filter_batch(
@@ -139,3 +166,4 @@ def test_dapo_filter_batch_drops_zero_advantage_groups() -> None:
     assert filtered.completion_token_ids == ((5,), (6,))
     assert filtered.rewards.tolist() == [1.0, 0.0]
     assert filtered.advantages.tolist() == [1.0, -1.0]
+    assert filtered.reference_is_policy is True

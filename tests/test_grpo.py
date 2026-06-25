@@ -5,9 +5,11 @@ import math
 import mlx.core as mx
 import pytest
 
+import mlxrl.algo.grpo as grpo_module
 from mlxrl.algo.grpo import (
     DAPOAlgorithm,
     DrGRPOAlgorithm,
+    GRPOAlgorithm,
     GSPOAlgorithm,
     RLOOAlgorithm,
     approximate_kl,
@@ -313,8 +315,12 @@ def test_beta_zero_loss_and_grad_ignore_reference_logprobs() -> None:
 
     loss_a, grad_a = loss_with_reference(reference_a)
     loss_b, grad_b = loss_with_reference(reference_b)
-    loss_error = mx.abs(loss_a - loss_b)
-    grad_error = mx.max(mx.abs(grad_a - grad_b))
+    loss_c, grad_c = loss_with_reference(policy)
+    loss_error = mx.maximum(mx.abs(loss_a - loss_b), mx.abs(loss_a - loss_c))
+    grad_error = mx.maximum(
+        mx.max(mx.abs(grad_a - grad_b)),
+        mx.max(mx.abs(grad_a - grad_c)),
+    )
     mx.eval(  # Test sync: materialize beta-zero loss/grad comparison.
         loss_error,
         grad_error,
@@ -322,3 +328,31 @@ def test_beta_zero_loss_and_grad_ignore_reference_logprobs() -> None:
 
     assert float(loss_error.item()) == 0.0
     assert float(grad_error.item()) == 0.0
+
+
+def test_beta_zero_real_reference_keeps_kl_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = mx.log(mx.array([[0.20, 0.50]], dtype=mx.float32))
+    old_policy = mx.log(mx.array([[0.18, 0.52]], dtype=mx.float32))
+    reference = mx.zeros_like(policy)
+    advantages = mx.array([1.0], dtype=mx.float32)
+    mask = mx.ones_like(policy)
+
+    def fake_kl(policy_logprobs: mx.array, reference_logprobs: mx.array) -> mx.array:
+        del policy_logprobs, reference_logprobs
+        return mx.ones_like(policy)
+
+    monkeypatch.setattr(grpo_module, "approximate_kl", fake_kl)
+
+    metrics = GRPOAlgorithm().compute_loss(
+        policy_logprobs=policy,
+        old_policy_logprobs=old_policy,
+        reference_logprobs=reference,
+        advantages=advantages,
+        completion_mask=mask,
+        beta=0.0,
+    )
+    mx.eval(metrics.loss, metrics.kl)  # Test sync: materialize beta-zero diagnostics.
+
+    assert float(metrics.kl.item()) == 1.0
