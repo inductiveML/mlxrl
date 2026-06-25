@@ -295,7 +295,7 @@ def _generate_model_action(
         if index > 0:
             if current is None:
                 raise RuntimeError("Internal error: missing previous decode token.")
-            logits = model(current, cache=state.cache)
+            logits = model(current[None], cache=state.cache)
             logprobs = logits[:, -1, :] - mx.logsumexp(logits[:, -1, :], axis=-1, keepdims=True)
         next_token = sampler(logprobs)
         sampled_logprob = sampled_token_logprobs(logprobs, next_token)

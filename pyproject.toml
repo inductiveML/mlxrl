@@ -1,6 +1,6 @@
 [project]
 name = "inductive-mlxrl"
-version = "0.2.0"
+version = "0.2.1"
 description = "Small single-process RL post-training for LLMs on Apple Silicon with MLX."
 readme = "README.md"
 requires-python = ">=3.11"

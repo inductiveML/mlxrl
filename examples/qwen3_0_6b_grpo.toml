@@ -13,7 +13,7 @@ gradient_checkpointing = false
 checkpoint_granularity = "per-layer"
 iogpu_wired_limit_mb = 49152
 micro_batch_size = 0
-output = "/tmp/mlxrl_config_smoke.npz"
+output = "reference_outputs/mlxrl_config_smoke.npz"
 
 [optimizer]
 name = "adam"
@@ -27,4 +27,3 @@ top_k = 0
 
 [algorithm]
 name = "grpo"
-

@@ -5,6 +5,16 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses semantic versioning once releases are cut.
 
+## [0.2.1] - 2026-06-25
+
+### Fixed
+
+- Keep model-backed agentic/GiGPO decode tokens rank-2 during KV-cache decode,
+  fixing real Qwen3 model rollouts.
+- Use valid repo-relative output paths in the committed Qwen smoke configs.
+- Preserve eval-mode old-policy/reference logprob prep while restoring caller
+  train mode afterward.
+
 ## [0.2.0] - 2026-06-24
 
 ### Added

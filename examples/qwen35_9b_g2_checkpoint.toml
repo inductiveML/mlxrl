@@ -13,7 +13,7 @@ gradient_checkpointing = true
 checkpoint_granularity = "per-layer"
 iogpu_wired_limit_mb = 49152
 micro_batch_size = 0
-output = "/tmp/mlxrl_qwen35_9b_g2_checkpoint.npz"
+output = "reference_outputs/mlxrl_qwen35_9b_g2_checkpoint.npz"
 
 [optimizer]
 name = "adam"

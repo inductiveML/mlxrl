@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import mlx.core as mx
+import mlx.nn as nn
 import pytest
 
 from mlxrl.env import RecurringStateTextEnv, SingleTurnRewardEnv, StepResult
@@ -17,6 +19,60 @@ class ToyTokenizer:
 
     def decode(self, tokens: list[int]) -> str:
         return "".join(chr((token - 1) % 251) for token in tokens)
+
+
+class ToyCache:
+    @property
+    def state(self) -> tuple[()]:
+        return ()
+
+    @state.setter
+    def state(self, state: Sequence[mx.array]) -> None:
+        del state
+
+    @property
+    def meta_state(self) -> tuple[()]:
+        return ()
+
+    @meta_state.setter
+    def meta_state(self, meta_state: Sequence[str]) -> None:
+        del meta_state
+
+    @classmethod
+    def from_state(
+        cls,
+        state: Sequence[mx.array],
+        meta_state: Sequence[str],
+    ) -> ToyCache:
+        del state, meta_state
+        return cls()
+
+
+class RankCheckingModel(nn.Module):
+    vocab_size = 8
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.call_shapes: list[tuple[int, ...]] = []
+
+    def make_cache(self) -> list[ToyCache]:
+        return [ToyCache()]
+
+    def __call__(
+        self,
+        tokens: mx.array,
+        cache: Sequence[ToyCache] | None = None,
+    ) -> mx.array:
+        del cache
+        self.call_shapes.append(tuple(tokens.shape))
+        if len(tokens.shape) != 2:
+            raise AssertionError(f"model tokens must be rank-2, got {tokens.shape}")
+        batch_size, sequence_length = tokens.shape
+        logits = mx.broadcast_to(
+            mx.arange(self.vocab_size, dtype=mx.float32),
+            (batch_size, sequence_length, self.vocab_size),
+        )
+        return logits
 
 
 def _scripted_action(
@@ -138,3 +194,24 @@ def test_agentic_rollout_uses_optional_batch_step_hook() -> None:
 
     assert env.batch_calls == 1
     assert [trajectory.total_return for trajectory in trajectories] == [0.0, 1.0, 2.0]
+
+
+def test_agentic_model_rollout_keeps_decode_tokens_batched() -> None:
+    model = RankCheckingModel()
+
+    trajectories = generate_agentic_trajectories(
+        model=model,
+        tokenizer=ToyTokenizer(),
+        env_factory=lambda task, seed, group: SingleTurnRewardEnv(
+            prompt=str(task),
+            reward_fn=lambda text: 1.0,
+        ),
+        tasks=("prompt",),
+        group_size=1,
+        sampling=SamplingConfig(max_tokens=2, temperature=0.0),
+    )
+
+    assert len(trajectories) == 1
+    assert trajectories[0].action_token_count == 2
+    assert all(len(shape) == 2 for shape in model.call_shapes)
+    assert model.call_shapes[-1] == (1, 1)
