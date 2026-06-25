@@ -11,6 +11,7 @@ from mlxrl.policy.logprobs import (
     completion_logprobs,
     dual_logprobs,
     prefix_cached_completion_logprobs,
+    target_logprobs_from_logits,
 )
 from mlxrl.rollout.naive import Completion, SamplingConfig
 from mlxrl.rollout.optimized import generate_from_prefix_cache, prefill_prompt_once
@@ -86,6 +87,30 @@ class ToyCachedModel(nn.Module):
 class ToyTokenizer:
     def decode(self, token_ids: Sequence[int]) -> str:
         return " ".join(str(token_id) for token_id in token_ids)
+
+
+def test_target_logprobs_from_logits_matches_explicit_log_softmax_gather() -> None:
+    logits = mx.array(
+        [
+            [[0.0, 1.0, -2.0], [2.0, -1.0, 0.5]],
+            [[-0.5, 0.25, 1.25], [1.5, 0.0, -0.25]],
+        ],
+        dtype=mx.float32,
+    )
+    targets = mx.array([[1, 0], [2, 1]], dtype=mx.int32)
+
+    explicit_logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
+    expected = mx.squeeze(
+        mx.take_along_axis(explicit_logprobs, targets[..., None], axis=-1),
+        axis=-1,
+    )
+    actual = target_logprobs_from_logits(logits, targets)
+    error = mx.max(mx.abs(actual - expected))
+    mx.eval(  # Test sync: materialize helper/reference logprob comparison.
+        error,
+    )
+
+    assert float(error.item()) < 1e-6
 
 
 def test_prefix_cached_completion_logprobs_match_full_forward_on_toy_model() -> None:

@@ -81,8 +81,7 @@ def completion_logprobs(
     input_rows: list[list[int]] = []
     target_rows: list[list[int]] = []
     completion_mask_rows: list[list[float]] = []
-    completion_starts: list[int] = []
-    completion_lengths: list[int] = []
+    gather_index_rows: list[list[int]] = []
 
     for prompt, completion, sequence in zip(
         prompt_token_ids,
@@ -100,38 +99,35 @@ def completion_logprobs(
         mask_row = [0.0] * max_completion_len
         for index in range(len(completion)):
             mask_row[index] = 1.0
+        gather_index_rows.append(
+            [
+                completion_start + index if index < len(completion) else 0
+                for index in range(max_completion_len)
+            ]
+        )
 
         input_rows.append(input_row)
         target_rows.append(target_row)
         completion_mask_rows.append(mask_row)
-        completion_starts.append(completion_start)
-        completion_lengths.append(len(completion))
 
     input_ids = mx.array(input_rows, dtype=mx.int32)
     target_ids = mx.array(target_rows, dtype=mx.int32)
     logits = _completion_forward(model, input_ids, use_checkpoint=use_checkpoint)
-    all_logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
-    target_logprobs = mx.take_along_axis(all_logprobs, target_ids[..., None], axis=-1)
-    target_logprobs = mx.squeeze(target_logprobs, axis=-1)
-
-    rows: list[mx.array] = []
-    for row_index, (start, length) in enumerate(
-        zip(completion_starts, completion_lengths, strict=True)
-    ):
-        row = target_logprobs[row_index, start : start + length]
-        if length < max_completion_len:
-            row = mx.concatenate(
-                [
-                    row,
-                    mx.zeros((max_completion_len - length,), dtype=row.dtype),
-                ],
-                axis=0,
-            )
-        rows.append(row)
+    target_logprobs = target_logprobs_from_logits(logits, target_ids)
+    gather_indices = mx.array(gather_index_rows, dtype=mx.int32)
+    mask = mx.array(completion_mask_rows, dtype=mx.float32)
+    completion_logprob_values = mx.take_along_axis(
+        target_logprobs,
+        gather_indices,
+        axis=1,
+    )
+    completion_logprob_values = completion_logprob_values * mask.astype(
+        completion_logprob_values.dtype
+    )
 
     return CompletionLogprobs(
-        logprobs=mx.stack(rows, axis=0),
-        mask=mx.array(completion_mask_rows, dtype=mx.float32),
+        logprobs=completion_logprob_values,
+        mask=mask,
     )
 
 
@@ -186,16 +182,12 @@ def prefix_cached_completion_logprobs(
             dtype=mx.int32,
         )
         logits = model(chunks, cache=batch_cache)
-        logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
-        grouped_logprobs = mx.squeeze(
-            mx.take_along_axis(logprobs, targets[..., None], axis=-1),
-            axis=-1,
-        )
+        grouped_logprobs = target_logprobs_from_logits(logits, targets)
         group_mask = mx.array(
             [
                 [1.0] * len(completion_token_ids[index])
                 + [0.0] * (max_completion_len - len(completion_token_ids[index]))
-                for index in row_indices
+            for index in row_indices
             ],
             dtype=grouped_logprobs.dtype,
         )
@@ -285,6 +277,22 @@ def _completion_forward(
 
     del use_checkpoint
     return model(input_ids)
+
+
+def target_logprobs_from_logits(logits: mx.array, target_ids: mx.array) -> mx.array:
+    """Gather target-token logprobs without materializing full log-softmax.
+
+    This is algebraically equivalent to gathering from
+    ``logits - logsumexp(logits)`` but avoids a large [batch, seq, vocab]
+    intermediate on training forwards.
+    """
+
+    target_logits = mx.squeeze(
+        mx.take_along_axis(logits, target_ids[..., None], axis=-1),
+        axis=-1,
+    )
+    normalizer = mx.squeeze(mx.logsumexp(logits, axis=-1, keepdims=True), axis=-1)
+    return target_logits - normalizer
 
 
 def pad_token_id_from_tokenizer(tokenizer: Any) -> int:

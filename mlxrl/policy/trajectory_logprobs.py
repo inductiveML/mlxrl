@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import mlx.core as mx
 import mlx.nn as nn
 
-from mlxrl.policy.logprobs import adapters_disabled
+from mlxrl.policy.logprobs import adapters_disabled, target_logprobs_from_logits
 from mlxrl.trajectory import Trajectory
 
 
@@ -47,7 +47,7 @@ def trajectory_action_logprobs(
 
     input_rows: list[list[int]] = []
     target_rows: list[list[int]] = []
-    action_target_indices: list[list[int]] = []
+    action_target_index_rows: list[list[int]] = []
     mask_rows: list[list[float]] = []
     target_width = max_sequence_len - 1
     for trajectory in trajectories:
@@ -59,35 +59,27 @@ def trajectory_action_logprobs(
             indices.extend(range(span.start - 1, span.end - 1))
         input_rows.append(input_row)
         target_rows.append(target_row)
-        action_target_indices.append(indices)
+        action_target_index_rows.append(
+            [indices[index] if index < len(indices) else 0 for index in range(max_action_len)]
+        )
         mask_rows.append([1.0] * len(indices) + [0.0] * (max_action_len - len(indices)))
 
     input_ids = mx.array(input_rows, dtype=mx.int32)
     target_ids = mx.array(target_rows, dtype=mx.int32)
     logits = model(input_ids)
-    all_logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
-    target_logprobs = mx.squeeze(
-        mx.take_along_axis(all_logprobs, target_ids[..., None], axis=-1),
-        axis=-1,
+    target_logprobs = target_logprobs_from_logits(logits, target_ids)
+    action_indices = mx.array(action_target_index_rows, dtype=mx.int32)
+    mask = mx.array(mask_rows, dtype=mx.float32)
+    action_logprobs = mx.take_along_axis(
+        target_logprobs,
+        action_indices,
+        axis=1,
     )
-
-    rows: list[mx.array] = []
-    for row_index, indices in enumerate(action_target_indices):
-        row_values = [target_logprobs[row_index, index] for index in indices]
-        row = mx.stack(row_values, axis=0)
-        if len(indices) < max_action_len:
-            row = mx.concatenate(
-                [
-                    row,
-                    mx.zeros((max_action_len - len(indices),), dtype=row.dtype),
-                ],
-                axis=0,
-            )
-        rows.append(row)
+    action_logprobs = action_logprobs * mask.astype(action_logprobs.dtype)
 
     return TrajectoryLogprobs(
-        logprobs=mx.stack(rows, axis=0),
-        mask=mx.array(mask_rows, dtype=mx.float32),
+        logprobs=action_logprobs,
+        mask=mask,
     )
 
 
