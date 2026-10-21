@@ -47,6 +47,8 @@ build-backend = "hatchling.build"
 [tool.uv]
 # mlx-tune 0.6 still pins datasets<4; use the patched series for CVE-2026-66007.
 override-dependencies = ["datasets>=5.0.1,<6"]
+# Newly patched security advisories require shorter cooldowns for these packages.
+exclude-newer-package = { certifi = "1 day", pillow = "1 day" }
 
 [tool.hatch.build.targets.sdist]
 include = [
