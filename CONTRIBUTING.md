@@ -77,6 +77,10 @@ with `datasets>=5.0.1,<6` to avoid CVE-2026-66007. This only affects the externa
 benchmark tools; the published package depends on MLX and MLX-LM. Remove the
 override when mlx-tune accepts a patched datasets release.
 
+Certifi and Pillow use a one-day package-age cutoff so their October 2026
+security patches can be installed promptly. Other dependencies retain the
+configured default cutoff.
+
 ## Release Cycle
 
 Releases are tag-driven and publish to PyPI through Trusted Publishing. Do not
