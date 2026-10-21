@@ -25,6 +25,8 @@ and this project uses semantic versioning once releases are cut.
 - Use valid prefix lengths when building compiled decode caches from MLX-LM
   0.32 cache buffers, and restore random state through MLX 0.32's mutable key.
 - Keep scalar metric conversions compatible with the current MLX type stubs.
+- Override the benchmark-only mlx-tune dependency's old datasets constraint
+  to use patched datasets 5.x (CVE-2026-66007).
 
 ## [0.2.2] - 2026-06-25
 

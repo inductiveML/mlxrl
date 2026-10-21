@@ -44,6 +44,10 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.uv]
+# mlx-tune 0.6 still pins datasets<4; use the patched series for CVE-2026-66007.
+override-dependencies = ["datasets>=5.0.1,<6"]
+
 [tool.hatch.build.targets.sdist]
 include = [
     "benchmarks",
