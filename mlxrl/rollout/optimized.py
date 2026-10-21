@@ -125,7 +125,10 @@ def clone_prompt_cache(prompt_cache: Sequence[Any]) -> list[Any]:
     clones: list[Any] = []
     for cache in prompt_cache:
         state = tree_map(_clone_cache_value, cache.state)
-        clones.append(type(cache).from_state(state, cache.meta_state))
+        if hasattr(cache, "meta_state"):
+            clones.append(type(cache).from_state(state, cache.meta_state))
+        else:  # mlx-lm 0.32 dropped meta_state.
+            clones.append(type(cache).from_state(state))
     return clones
 
 

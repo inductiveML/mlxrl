@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import mlx.core as mx
 import pytest
+from mlx_lm.models import cache as mlx_cache
 
 import mlxrl.rollout.optimized as optimized_module
 from mlxrl.rollout.naive import SamplingConfig
@@ -179,3 +180,51 @@ def test_random_batched_rollout_keeps_fallback_on_first_token_eos(
         ((99,), (-0.5,), "fallback"),
         ((99,), (-0.5,), "fallback"),
     )
+
+
+def _filled(cache):
+    keys = mx.arange(2 * 5 * 8, dtype=mx.float32).reshape(1, 2, 5, 8)
+    cache.update_and_fetch(keys, keys + 1)
+    return cache
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda: _filled(mlx_cache.KVCache()),
+        lambda: _filled(mlx_cache.ChunkedKVCache(64)),
+        lambda: FixedKVCache(mx.zeros((1, 2, 8, 8)), mx.zeros((1, 2, 8, 8)), mx.array([5])),
+    ],
+    ids=["KVCache", "ChunkedKVCache", "FixedKVCache"],
+)
+def test_clone_prompt_cache_is_independent(make) -> None:
+    original = make()
+    offset = mx.array(original.offset)
+    keys = mx.array(original.keys[..., :5, :])
+
+    (clone,) = optimized_module.clone_prompt_cache([original])
+
+    assert type(clone) is type(original)
+    assert mx.array_equal(clone.offset, offset).item()
+    assert mx.array_equal(clone.keys[..., :5, :], keys).item()
+    step = mx.ones((1, 2, 1, 8))
+    clone.update_and_fetch(step, step)
+    assert mx.array_equal(mx.array(clone.offset) - offset, mx.ones_like(offset)).item()
+    assert mx.array_equal(original.offset, offset).item()
+    assert mx.array_equal(original.keys[..., :5, :], keys).item()
+
+
+def test_clone_prompt_cache_without_meta_state() -> None:
+    class StateOnly:
+        state = (mx.arange(6),)
+
+        @classmethod
+        def from_state(cls, state):
+            obj = cls()
+            obj.state = state
+            return obj
+
+    (clone,) = optimized_module.clone_prompt_cache([StateOnly()])
+
+    assert isinstance(clone, StateOnly)
+    assert mx.array_equal(clone.state[0], StateOnly.state[0]).item()
