@@ -354,12 +354,12 @@ def optimizer_step(
     )
     model.eval()
     return StepMetrics(
-        loss=float(loss.item()),
-        policy_gradient_loss=float(policy_gradient_loss.item()),
-        kl=float(kl.item()),
-        mean_ratio=float(mean_ratio.item()),
-        clip_fraction=float(clip_fraction.item()),
-        mean_reward=float(mean_reward.item()),
+        loss=float(loss),
+        policy_gradient_loss=float(policy_gradient_loss),
+        kl=float(kl),
+        mean_ratio=float(mean_ratio),
+        clip_fraction=float(clip_fraction),
+        mean_reward=float(mean_reward),
     )
 
 

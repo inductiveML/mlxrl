@@ -166,7 +166,7 @@ def cache_carry_logit_error(
     mx.eval(  # Hybrid carry sync: materialize cache-carry equivalence scalar.
         error
     )
-    return float(error.item())
+    return float(error)
 
 
 def _initial_state(
@@ -303,9 +303,9 @@ def _generate_model_action(
             next_token,
             sampled_logprob,
         )
-        token_id = int(next_token.item())
+        token_id = int(next_token)
         tokens.append(token_id)
-        old_logprobs.append(float(sampled_logprob.item()))
+        old_logprobs.append(float(sampled_logprob))
         current = next_token
 
     return GeneratedAction(

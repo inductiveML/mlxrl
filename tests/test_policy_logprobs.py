@@ -117,7 +117,7 @@ def test_target_logprobs_from_logits_matches_explicit_log_softmax_gather() -> No
         error,
     )
 
-    assert float(error.item()) < 1e-6
+    assert float(error) < 1e-6
 
 
 def test_prefix_cached_completion_logprobs_match_full_forward_on_toy_model() -> None:
@@ -134,8 +134,8 @@ def test_prefix_cached_completion_logprobs_match_full_forward_on_toy_model() -> 
         mask_error,
     )
 
-    assert float(max_error.item()) < 1e-6
-    assert float(mask_error.item()) == 0.0
+    assert float(max_error) < 1e-6
+    assert float(mask_error) == 0.0
     assert model.cached_call_shapes == [(1, 2), (2, 2)]
 
 
@@ -154,8 +154,8 @@ def test_completion_logprobs_from_prepared_inputs_matches_public_helper() -> Non
         mask_error,
     )
 
-    assert float(max_error.item()) < 1e-6
-    assert float(mask_error.item()) == 0.0
+    assert float(max_error) < 1e-6
+    assert float(mask_error) == 0.0
 
 
 def test_rollout_captured_logprobs_match_completion_forward_on_toy_model() -> None:
@@ -179,7 +179,7 @@ def test_rollout_captured_logprobs_match_completion_forward_on_toy_model() -> No
         max_error,
     )
 
-    assert float(max_error.item()) < 1e-6
+    assert float(max_error) < 1e-6
 
 
 def test_dual_logprobs_can_skip_reference_forward_for_zero_beta() -> None:
@@ -200,7 +200,7 @@ def test_dual_logprobs_can_skip_reference_forward_for_zero_beta() -> None:
         dual.mask,
     )
 
-    assert float(max_error.item()) == 0.0
+    assert float(max_error) == 0.0
     assert dual.mask.tolist() == [[1.0, 1.0], [1.0, 0.0]]
     assert model.cached_call_shapes == []
 
@@ -278,7 +278,7 @@ def test_batch_from_rollouts_recomputes_old_policy_logprobs() -> None:
 
     max_error = mx.max(mx.abs(batch.old_policy_logprobs - expected.logprobs))
     mx.eval(max_error)  # Test sync: materialize recomputed old-policy comparison.
-    assert float(max_error.item()) < 1e-6
+    assert float(max_error) < 1e-6
     assert batch.mask.tolist() == [[1.0, 1.0], [1.0, 0.0]]
     assert batch.logprob_inputs is not None
     assert model.cached_call_shapes == [(1, 2), (2, 2)]

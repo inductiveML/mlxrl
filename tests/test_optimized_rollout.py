@@ -33,7 +33,7 @@ def test_completion_major_draw_keys_match_mlx_global_stream() -> None:
     for _ in range(6):
         token = mx.random.categorical(logits)
         mx.eval(token)  # Test sync: materialize sampled token for Python assertion.
-        global_draws.append(int(token.item()))
+        global_draws.append(int(token))
 
     keys, final_state = _completion_major_draw_keys(
         mx.random.key(7),
@@ -45,7 +45,7 @@ def test_completion_major_draw_keys_match_mlx_global_stream() -> None:
         for key in row:
             token = mx.random.categorical(logits, key=key)
             mx.eval(token)  # Test sync: materialize sampled token for Python assertion.
-            explicit_draws.append(int(token.item()))
+            explicit_draws.append(int(token))
 
     assert explicit_draws == global_draws
 
@@ -58,7 +58,7 @@ def test_completion_major_draw_keys_match_mlx_global_stream() -> None:
         mx.eval(token)  # Test sync: advance and materialize consumed global draw.
     global_next = mx.random.categorical(logits)
     mx.eval(global_next)  # Test sync: materialize next global draw for assertion.
-    assert int(explicit_next.item()) == int(global_next.item())
+    assert int(explicit_next) == int(global_next)
 
 
 def test_fixed_kv_cache_updates_rows_at_dynamic_offsets() -> None:

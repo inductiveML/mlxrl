@@ -85,5 +85,5 @@ def test_trajectory_logprobs_gather_action_positions_only() -> None:
         gathered.mask,
     )
 
-    assert float(error.item()) < 1e-6
+    assert float(error) < 1e-6
     assert gathered.mask.tolist() == [[1.0, 1.0, 1.0]]

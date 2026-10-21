@@ -5,6 +5,27 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses semantic versioning once releases are cut.
 
+## [0.2.3] - 2026-10-21
+
+### Changed
+
+- Project only completion positions through the output head for stock Qwen2,
+  Qwen3, and Llama models, reducing training logit memory while preserving
+  logprobs and gradients. Custom subclasses and wrappers retain the full
+  forward path. Thanks to @TarangKhanna for PR #6.
+- Refresh runtime, development, and benchmark dependencies while preserving
+  the seven-day package-age cutoff in the lockfile.
+- Include the Pillow, aiohttp, AnyIO, and urllib3 updates from Dependabot
+  PRs #1 through #4.
+
+### Fixed
+
+- Support MLX-LM 0.32 prompt-cache cloning while retaining older cache support.
+  Thanks to @TarangKhanna for PR #5.
+- Use valid prefix lengths when building compiled decode caches from MLX-LM
+  0.32 cache buffers, and restore random state through MLX 0.32's mutable key.
+- Keep scalar metric conversions compatible with the current MLX type stubs.
+
 ## [0.2.2] - 2026-06-25
 
 ### Added

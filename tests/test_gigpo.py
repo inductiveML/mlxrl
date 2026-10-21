@@ -137,5 +137,5 @@ def test_gigpo_multiturn_loss_and_gradient_match_hand_computation() -> None:
         max_gradient_error,
     )
 
-    assert abs(float(loss.item()) - float(expected_loss.item())) < 1e-6
-    assert float(max_gradient_error.item()) < 1e-6
+    assert abs(float(loss) - float(expected_loss)) < 1e-6
+    assert float(max_gradient_error) < 1e-6

@@ -203,8 +203,8 @@ def test_echo_learns_fixed_echo_targets() -> None:
         )
     assert after is not None
 
-    assert after.loss_echo < float(before.loss_echo.item())
-    assert after.echo_accuracy > float(before.echo_accuracy.item())
+    assert after.loss_echo < float(before.loss_echo)
+    assert after.echo_accuracy > float(before.echo_accuracy)
 
 
 def test_echo_normalization_keeps_action_gradient_stable_when_echo_is_duplicated() -> None:
@@ -251,7 +251,7 @@ def test_echo_normalization_keeps_action_gradient_stable_when_echo_is_duplicated
     )
     mx.eval(action_error)  # Test sync: materialize duplicated-ECHO action grad delta.
 
-    assert float(action_error.item()) < 1e-6
+    assert float(action_error) < 1e-6
 
 
 @pytest.mark.parametrize(
@@ -285,11 +285,11 @@ def test_echo_edge_role_batches_stay_finite(
     )
     mx.eval(metrics.loss, metrics.loss_echo, metrics.echo_accuracy)
 
-    assert math.isfinite(float(metrics.loss.item()))
+    assert math.isfinite(float(metrics.loss))
     assert metrics.loss_echo is not None
-    assert math.isfinite(float(metrics.loss_echo.item()))
+    assert math.isfinite(float(metrics.loss_echo))
     assert metrics.echo_accuracy is not None
-    assert math.isfinite(float(metrics.echo_accuracy.item()))
+    assert math.isfinite(float(metrics.echo_accuracy))
 
 
 def test_masked_tokens_have_zero_gradient_even_with_echo_alpha() -> None:
@@ -317,7 +317,7 @@ def test_masked_tokens_have_zero_gradient_even_with_echo_alpha() -> None:
     masked_only_grad = mx.max(mx.abs(_tree_array(gradients, "echo_logits")))
     mx.eval(masked_only_grad)  # Test sync: materialize masked-token gradient.
 
-    assert float(masked_only_grad.item()) == 0.0
+    assert float(masked_only_grad) == 0.0
 
 
 def test_echo_schedule_linear_taper_to_zero() -> None:
