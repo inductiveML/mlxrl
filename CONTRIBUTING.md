@@ -72,6 +72,11 @@ runtime dependencies marked for macOS arm64 and Python `<3.15` so universal
 resolvers do not try to solve MLX wheels for unsupported platform or Python
 splits.
 
+The development environment overrides mlx-tune 0.6's `datasets<4` constraint
+with `datasets>=5.0.1,<6` to avoid CVE-2026-66007. This only affects the external
+benchmark tools; the published package depends on MLX and MLX-LM. Remove the
+override when mlx-tune accepts a patched datasets release.
+
 ## Release Cycle
 
 Releases are tag-driven and publish to PyPI through Trusted Publishing. Do not

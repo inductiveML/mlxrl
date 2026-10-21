@@ -68,8 +68,8 @@ def test_grpo_loss_matches_hand_computed_tiny_vocab_example() -> None:
     manual_pg = ((1.0 + 1.0) + (-1.0 + -1.0)) / 4
     expected_loss = manual_pg + beta * manual_kl
 
-    assert abs(float(metrics.kl.item()) - manual_kl) < 1e-6
-    assert abs(float(metrics.loss.item()) - expected_loss) < 1e-6
+    assert abs(float(metrics.kl) - manual_kl) < 1e-6
+    assert abs(float(metrics.loss) - expected_loss) < 1e-6
 
 
 def test_prompt_positions_are_zero_contribution_to_loss_and_grad() -> None:
@@ -114,7 +114,7 @@ def test_prompt_positions_are_zero_contribution_to_loss_and_grad() -> None:
         policy_grad,
     )
 
-    assert float(masked.loss.item()) == float(completion_only.loss.item())
+    assert float(masked.loss) == float(completion_only.loss)
     assert policy_grad[:, :2].tolist() == [[0.0, 0.0]]
     assert any(abs(value) > 0.0 for value in policy_grad[:, 2:].tolist()[0])
 
@@ -156,7 +156,7 @@ def test_phase3_variants_reduce_to_base_grpo_under_configs() -> None:
     mx.eval(base.loss, *losses)  # Test sync: materialize losses for Python assertions.
 
     for loss in losses:
-        assert abs(float(loss.item()) - float(base.loss.item())) < 1e-6
+        assert abs(float(loss) - float(base.loss)) < 1e-6
 
 
 def test_dapo_loss_and_gradient_match_hand_computed_clipped_example() -> None:
@@ -186,8 +186,8 @@ def test_dapo_loss_and_gradient_match_hand_computed_clipped_example() -> None:
         max_gradient_error,
     )
 
-    assert abs(float(loss.item()) - expected_loss) < 1e-6
-    assert float(max_gradient_error.item()) < 1e-6
+    assert abs(float(loss) - expected_loss) < 1e-6
+    assert float(max_gradient_error) < 1e-6
 
 
 def test_gspo_sequence_ratio_uses_length_normalized_log_likelihood() -> None:
@@ -207,8 +207,8 @@ def test_gspo_sequence_ratio_uses_length_normalized_log_likelihood() -> None:
     )
     mx.eval(metrics.loss, metrics.mean_ratio)  # Test sync: materialize GSPO scalars.
 
-    assert abs(float(metrics.mean_ratio.item()) - 1.5) < 1e-6
-    assert abs(float(metrics.loss.item()) - 0.5) < 1e-6
+    assert abs(float(metrics.mean_ratio) - 1.5) < 1e-6
+    assert abs(float(metrics.loss) - 0.5) < 1e-6
 
 
 def test_gspo_sequence_loss_and_gradient_match_hand_computed_example() -> None:
@@ -236,8 +236,8 @@ def test_gspo_sequence_loss_and_gradient_match_hand_computed_example() -> None:
         max_gradient_error,
     )
 
-    assert abs(float(loss.item()) - 0.5) < 1e-6
-    assert float(max_gradient_error.item()) < 1e-6
+    assert abs(float(loss) - 0.5) < 1e-6
+    assert float(max_gradient_error) < 1e-6
 
 
 def test_rloo_advantage_loss_and_gradient_match_hand_computed_example() -> None:
@@ -278,9 +278,9 @@ def test_rloo_advantage_loss_and_gradient_match_hand_computed_example() -> None:
         max_gradient_error,
     )
 
-    assert float(max_advantage_error.item()) == 0.0
-    assert abs(float(loss.item()) - expected_loss) < 1e-6
-    assert float(max_gradient_error.item()) < 1e-6
+    assert float(max_advantage_error) == 0.0
+    assert abs(float(loss) - expected_loss) < 1e-6
+    assert float(max_gradient_error) < 1e-6
 
 
 def test_approximate_kl_is_zero_when_policies_match() -> None:
@@ -326,8 +326,8 @@ def test_beta_zero_loss_and_grad_ignore_reference_logprobs() -> None:
         grad_error,
     )
 
-    assert float(loss_error.item()) == 0.0
-    assert float(grad_error.item()) == 0.0
+    assert float(loss_error) == 0.0
+    assert float(grad_error) == 0.0
 
 
 def test_beta_zero_real_reference_keeps_kl_diagnostic(
@@ -355,4 +355,4 @@ def test_beta_zero_real_reference_keeps_kl_diagnostic(
     )
     mx.eval(metrics.loss, metrics.kl)  # Test sync: materialize beta-zero diagnostics.
 
-    assert float(metrics.kl.item()) == 1.0
+    assert float(metrics.kl) == 1.0

@@ -108,14 +108,14 @@ def _phase1_toy_gate(_: argparse.Namespace) -> int:
         expected_loss,
     )
 
-    advantage_error = mx.max(mx.abs(advantages - expected_advantages)).item()
-    loss_error = abs(float(metrics.loss.item()) - float(expected_loss.item()))
+    advantage_error = float(mx.max(mx.abs(advantages - expected_advantages)))
+    loss_error = abs(float(metrics.loss) - float(expected_loss))
     tolerance = 1e-6
     print(f"advantages: {advantages.tolist()}")
     print(f"expected_advantages: {expected_advantages.tolist()}")
-    print(f"loss: {float(metrics.loss.item()):.8f}")
-    print(f"expected_loss: {float(expected_loss.item()):.8f}")
-    print(f"kl: {float(metrics.kl.item()):.8f}")
+    print(f"loss: {float(metrics.loss):.8f}")
+    print(f"expected_loss: {float(expected_loss):.8f}")
+    print(f"kl: {float(metrics.kl):.8f}")
     print(f"advantage_error: {advantage_error:.8e}")
     print(f"loss_error: {loss_error:.8e}")
     if advantage_error > tolerance or loss_error > tolerance:
@@ -787,11 +787,11 @@ def _phase2_equivalence(args: argparse.Namespace) -> int:
     print(f"phase2_reward_mean: {sum(phase2_rewards) / len(phase2_rewards):.6f}")
     print(f"phase1_accuracy: {phase1_accuracy:.6f} phase2_accuracy: {phase2_accuracy:.6f}")
     print(f"phase1_format: {phase1_format:.6f} phase2_format: {phase2_format:.6f}")
-    print(f"policy_logprob_error: {float(policy_logprob_error.item()):.8e}")
-    print(f"reference_logprob_error: {float(reference_logprob_error.item()):.8e}")
-    print(f"loss_error: {float(loss_error.item()):.8e}")
-    print(f"phase1_loss: {float(phase1_loss.item()):.8f}")
-    print(f"phase2_loss: {float(phase2_loss.item()):.8f}")
+    print(f"policy_logprob_error: {float(policy_logprob_error):.8e}")
+    print(f"reference_logprob_error: {float(reference_logprob_error):.8e}")
+    print(f"loss_error: {float(loss_error):.8e}")
+    print(f"phase1_loss: {float(phase1_loss):.8f}")
+    print(f"phase2_loss: {float(phase2_loss):.8f}")
     print(f"speedup_samples_per_s: {phase1_elapsed / phase2_elapsed:.6f}")
     print(f"peak_memory_delta_gb: {phase2_peak - phase1_peak:.6f}")
 
@@ -813,11 +813,11 @@ def _phase2_equivalence(args: argparse.Namespace) -> int:
 
     if not token_equal:
         raise SystemExit("Phase 2 equivalence failed: generated tokens differ.")
-    if float(policy_logprob_error.item()) > args.tolerance:
+    if float(policy_logprob_error) > args.tolerance:
         raise SystemExit("Phase 2 equivalence failed: policy logprobs differ.")
-    if float(reference_logprob_error.item()) > args.tolerance:
+    if float(reference_logprob_error) > args.tolerance:
         raise SystemExit("Phase 2 equivalence failed: reference logprobs differ.")
-    if float(loss_error.item()) > args.tolerance:
+    if float(loss_error) > args.tolerance:
         raise SystemExit("Phase 2 equivalence failed: losses differ.")
     print("phase2_equivalence: passed")
     return 0

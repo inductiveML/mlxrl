@@ -1,6 +1,6 @@
 [project]
 name = "inductive-mlxrl"
-version = "0.2.2"
+version = "0.2.3"
 description = "Small single-process RL post-training for LLMs on Apple Silicon with MLX."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -43,6 +43,10 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv]
+# mlx-tune 0.6 still pins datasets<4; use the patched series for CVE-2026-66007.
+override-dependencies = ["datasets>=5.0.1,<6"]
 
 [tool.hatch.build.targets.sdist]
 include = [

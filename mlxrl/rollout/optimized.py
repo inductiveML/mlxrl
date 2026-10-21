@@ -132,6 +132,13 @@ def clone_prompt_cache(prompt_cache: Sequence[Any]) -> list[Any]:
     return clones
 
 
+def _cache_keys_and_values(cache: Any) -> tuple[mx.array, mx.array]:
+    # MLX-LM 0.32 state includes offsets and untrimmed allocation buffers.
+    if hasattr(cache, "keys_and_values"):
+        return cache.keys_and_values()
+    return cache.state
+
+
 def fixed_decode_cache_from_prefix(
     prompt_cache: Sequence[Any],
     max_tokens: int,
@@ -141,7 +148,7 @@ def fixed_decode_cache_from_prefix(
 
     fixed: list[FixedKVCache] = []
     for cache in prompt_cache:
-        keys, values = cache.state
+        keys, values = _cache_keys_and_values(cache)
         prefix_length = keys.shape[2]
         max_length = prefix_length + max_tokens
         if keys.shape[0] != 1 and keys.shape[0] != batch_size:
@@ -191,7 +198,7 @@ def fixed_decode_cache_from_prefixes(
     layer_count = len(prefixes[0].cache)
     fixed: list[FixedKVCache] = []
     for layer_index in range(layer_count):
-        layer_states = [prefix.cache[layer_index].state for prefix in prefixes]
+        layer_states = [_cache_keys_and_values(prefix.cache[layer_index]) for prefix in prefixes]
         first_keys, first_values = layer_states[0]
         max_prefix_length = max(keys.shape[2] for keys, _ in layer_states)
         max_length = max_prefix_length + max_tokens
@@ -276,9 +283,9 @@ def generate_from_prefix_cache(
         next_token,
         sampled_logprob,
     )
-    token_id = int(next_token.item())
+    token_id = int(next_token)
     completion.append(token_id)
-    old_policy_logprobs.append(float(sampled_logprob.item()))
+    old_policy_logprobs.append(float(sampled_logprob))
     if token_id in eos_token_ids:
         return (
             tuple(completion),
@@ -303,9 +310,9 @@ def generate_from_prefix_cache(
             next_token,
             sampled_logprob,
         )
-        token_id = int(next_token.item())
+        token_id = int(next_token)
         completion.append(token_id)
-        old_policy_logprobs.append(float(sampled_logprob.item()))
+        old_policy_logprobs.append(float(sampled_logprob))
         if token_id in eos_token_ids:
             break
         current = next_token
@@ -539,11 +546,12 @@ def _uses_random_sampling(config: SamplingConfig) -> bool:
 
 
 def _current_random_state() -> mx.array:
-    return mx.array(cast(list[mx.array], mx.random.state)[0])
+    return mx.array(cast(Sequence[mx.array], mx.random.state)[0])
 
 
 def _set_random_state(state: mx.array) -> None:
-    cast(list[mx.array], mx.random.state)[0] = state
+    # MLX 0.32 exposes a read-only state container; its key remains mutable.
+    cast(Sequence[mx.array], mx.random.state)[0][:] = state
 
 
 def _token_ids(tokens: mx.array) -> list[int]:

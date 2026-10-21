@@ -118,9 +118,9 @@ def generate_completion(
             next_token,
             sampled_logprob,
         )
-        token_id = int(next_token.item())
+        token_id = int(next_token)
         completion.append(token_id)
-        old_policy_logprobs.append(float(sampled_logprob.item()))
+        old_policy_logprobs.append(float(sampled_logprob))
         if token_id in eos_ids:
             break
         current = next_token

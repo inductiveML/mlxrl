@@ -138,7 +138,7 @@ def test_grpo_metrics_skips_kl_for_dummy_reference_beta_zero(
     )
     mx.eval(metrics.loss, metrics.kl)  # Test sync: materialize beta-zero fast path.
 
-    assert float(metrics.kl.item()) == 0.0
+    assert float(metrics.kl) == 0.0
 
 
 def test_grpo_metrics_rejects_dummy_reference_with_nonzero_beta() -> None:
@@ -215,7 +215,7 @@ def test_grpo_metrics_accepts_prepared_logprob_inputs() -> None:
     )
     mx.eval(*errors)  # Test sync: materialize prepared/direct metrics comparison.
 
-    assert max(float(error.item()) for error in errors) < 1e-6
+    assert max(float(error) for error in errors) < 1e-6
 
 
 def test_optimizer_step_rejects_micro_batching_for_sequence_reductions() -> None:
