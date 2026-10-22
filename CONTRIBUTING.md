@@ -94,21 +94,34 @@ One-time PyPI setup:
 - set environment name to `pypi`;
 - require manual approval on the GitHub `pypi` environment before publishing.
 
+Restrict the environment to tags matching `v*`, disable administrator bypass
+for environment approval, and protect release-tag creation, updates, and
+deletion so only repository administrators can perform them. Require the
+`Linux CPU-safe checks` status on main and retain pull-request review.
+
+The publisher runs the official PyPA container by digest. When updating it,
+resolve the upstream release's commit-tagged image from
+`ghcr.io/pypa/gh-action-pypi-publish`, verify its content digest and source
+metadata, and update the digest and source-commit comment together. Other
+actions use commit pins maintained by Dependabot.
+
 For each release:
 
-1. Update the version in `pyproject.toml`.
+1. Update the version in `pyproject.toml` and `mlxrl/__init__.py`, then run `uv lock`.
 2. Add the release notes to `CHANGELOG.md`.
 3. Run the local gates:
 
 ```bash
-UV_CACHE_DIR=.uv-cache uv run pytest
-UV_CACHE_DIR=.uv-cache uv run ruff check .
-UV_CACHE_DIR=.uv-cache uv run pyright
-UV_CACHE_DIR=.uv-cache uv build
-UV_CACHE_DIR=.uv-cache uv run --no-project --python 3.11 --with twine twine check dist/*
+UV_CACHE_DIR=.uv-cache uv sync --frozen --all-groups
+UV_CACHE_DIR=.uv-cache uv run --no-sync pytest
+UV_CACHE_DIR=.uv-cache uv run --no-sync ruff check .
+UV_CACHE_DIR=.uv-cache uv run --no-sync pyright
+UV_CACHE_DIR=.uv-cache uv run --no-sync python .github/scripts/audit_dependencies.py
+UV_CACHE_DIR=.uv-cache uv build --no-build-isolation --python .venv/bin/python
+UV_CACHE_DIR=.uv-cache uv run --no-sync twine check dist/*
 ```
 
-4. Commit and merge the release prep.
+4. Commit and merge the release prep, then wait for main's push CI to pass.
 5. Tag the release from `main`:
 
 ```bash
@@ -116,12 +129,13 @@ git tag -a vX.Y.Z -m "Release vX.Y.Z"
 git push origin vX.Y.Z
 ```
 
-The `Release` workflow builds the source distribution and wheel, checks package
-metadata with Twine, stores the artifacts, publishes them to PyPI from the
-`pypi` environment, and creates a GitHub Release with the built distributions
-attached. Running the workflow manually builds and checks artifacts without
-publishing because the publish and GitHub Release jobs only run for `v*.*.*`
-tags.
+The `Release` workflow first checks that the tag matches the package version,
+identifies a commit already on main, and has successful main push CI. It builds
+with frozen validation and build tools, checks metadata with Twine, stores the
+artifacts, and publishes signed distributions from the protected `pypi`
+environment after maintainer approval. The GitHub Release receives the same
+files. Manual runs on branches only build and check artifacts; manual runs on
+version tags must satisfy all publication controls.
 
 The PyPI distribution name is `inductive-mlxrl`; the Python import package and
 CLI command remain `mlxrl`.

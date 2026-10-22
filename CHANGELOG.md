@@ -5,6 +5,23 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses semantic versioning once releases are cut.
 
+## [0.2.4] - 2026-10-22
+
+### Security
+
+- Require MLX-LM 0.32.0 or later with its MLX 0.32.2 minimum, and disable custom model Python
+  execution in library, example, and benchmark loaders. The older minimum
+  allowed the unsafe `model_file` behavior addressed by upstream's
+  [CVE-2026-5843 fix](https://github.com/ml-explore/mlx-lm/pull/1385).
+- Parse answer and action tags in linear time to prevent malformed model
+  output from stalling reward evaluation and multi-turn rollouts.
+- Reject CLI output paths whose symlinks resolve outside the working directory.
+- Pin release actions to verified commits, freeze build and validation tools,
+  audit all locked dependencies in CI, and require release tags to match a
+  package version on main with successful push CI.
+- Add security reporting guidance, ownership of release controls, and weekly
+  dependency and action updates.
+
 ## [0.2.3] - 2026-10-21
 
 ### Changed

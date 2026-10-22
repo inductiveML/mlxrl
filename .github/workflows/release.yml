@@ -9,63 +9,87 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build and verify distributions
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
     env:
       PYTHONPATH: ${{ github.workspace }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
-      - uses: astral-sh/setup-uv@v5
-
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
 
-      - name: Ruff
-        run: uv run --no-project --python 3.11 --with ruff ruff check .
+      - name: Verify release tag, main ancestry, and successful main CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python .github/scripts/verify_release.py
 
-      - name: Pytest CPU-safe subset
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        with:
+          version: "0.13.5"
+          enable-cache: false
+
+      - name: Install locked build and validation tools
+        run: uv sync --frozen --only-group ci --no-install-project
+
+      - name: Ruff
+        run: uv run --no-sync ruff check .
+
+      - name: Pytest CPU-safe subset and security regressions
         run: >
-          uv run --no-project --python 3.11 --with pytest
-          pytest
+          uv run --no-sync pytest
           tests/test_benchmark_metrics.py
           tests/test_config.py
           tests/test_import_direction.py
           tests/test_rewards.py
+          tests/test_security.py
+          tests/test_release_policy.py
 
       - name: Pyright CPU-safe subset
         run: >
-          uv run --no-project --python 3.11 --with pyright --with pytest
-          pyright
+          uv run --no-sync pyright
           mlxrl/config.py
           tests/test_config.py
           tests/test_import_direction.py
           tests/test_rewards.py
+          tests/test_security.py
+          tests/test_release_policy.py
+          .github/scripts
 
       - name: Build source and wheel distributions
-        run: |
-          rm -rf dist
-          uv build
+        run: uv build --no-build-isolation --python .venv/bin/python
 
       - name: Check distribution metadata
-        run: uv run --no-project --python 3.11 --with twine twine check dist/*
+        run: uv run --no-sync twine check dist/*
 
       - name: Upload distribution artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: python-package-distributions
           path: dist/
+          if-no-files-found: error
+          retention-days: 7
 
   publish-pypi:
     name: Publish to PyPI
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: pypi
       url: https://pypi.org/p/inductive-mlxrl
@@ -74,13 +98,25 @@ jobs:
       id-token: write
     steps:
       - name: Download distribution artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: python-package-distributions
           path: dist/
 
       - name: Publish distributions to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        # PyPA v1.14.3, source commit 7245906fb61fa33a13554f9d5fb856fe61758086.
+        # Pin its execution image too: the composite action otherwise pulls a mutable tag.
+        uses: docker://ghcr.io/pypa/gh-action-pypi-publish@sha256:411241df99067c98b6d08fd8e26d14e86740a22460599c2af571e6dc26e27ffc
+        env:
+          INPUT_USER: __token__
+          INPUT_PASSWORD: ""
+          INPUT_REPOSITORY_URL: https://upload.pypi.org/legacy/
+          INPUT_PACKAGES_DIR: dist/
+          INPUT_VERIFY_METADATA: "true"
+          INPUT_SKIP_EXISTING: "false"
+          INPUT_VERBOSE: "true"
+          INPUT_PRINT_HASH: "true"
+          INPUT_ATTESTATIONS: "true"
 
   github-release:
     name: Create GitHub Release
@@ -89,29 +125,26 @@ jobs:
       - build
       - publish-pypi
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Download distribution artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: python-package-distributions
           path: dist/
 
-      - name: Create or update release
+      - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            gh release upload "$TAG_NAME" dist/* --clobber
-          else
-            gh release create "$TAG_NAME" dist/* \
-              --title "$TAG_NAME" \
-              --generate-notes \
-              --verify-tag
-          fi
+          gh release create "$TAG_NAME" dist/* \
+            --title "$TAG_NAME" \
+            --generate-notes \
+            --verify-tag

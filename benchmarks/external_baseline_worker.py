@@ -317,7 +317,7 @@ def run_mlx_lm_lora(args: argparse.Namespace) -> BenchResult:
         prompt_token_lengths = [
             encoded_prompt_token_count(tokenizer, row["prompt"]) for row in rows
         ]
-        ref_loaded = load(args.model)
+        ref_loaded = load(args.model, trust_remote_code=False)
         ref_model = ref_loaded[0]
         ref_model.freeze()
         optimizer = optim.Adam(learning_rate=args.learning_rate)

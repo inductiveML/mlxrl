@@ -11,32 +11,47 @@ jobs:
   linux-cpu:
     name: Linux CPU-safe checks
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       PYTHONPATH: ${{ github.workspace }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        with:
+          version: "0.13.5"
+          enable-cache: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
 
-      - name: Ruff
-        run: uv run --no-project --python 3.11 --with ruff ruff check .
+      - name: Install locked CI tools
+        run: uv sync --frozen --only-group ci --no-install-project
 
-      - name: Pytest CPU-safe subset
+      - name: Ruff
+        run: uv run --no-sync ruff check .
+
+      - name: Pytest CPU-safe subset and security regressions
         run: >
-          uv run --no-project --python 3.11 --with pytest
-          pytest
+          uv run --no-sync pytest
           tests/test_benchmark_metrics.py
           tests/test_config.py
           tests/test_import_direction.py
           tests/test_rewards.py
+          tests/test_security.py
+          tests/test_release_policy.py
 
       - name: Pyright CPU-safe subset
         run: >
-          uv run --no-project --python 3.11 --with pyright --with pytest
-          pyright
+          uv run --no-sync pyright
           mlxrl/config.py
           tests/test_config.py
           tests/test_import_direction.py
           tests/test_rewards.py
+          tests/test_security.py
+          tests/test_release_policy.py
+          .github/scripts
+
+      - name: Audit all locked dependency versions
+        run: uv run --no-sync python .github/scripts/audit_dependencies.py

@@ -1,6 +1,6 @@
 [project]
 name = "inductive-mlxrl"
-version = "0.2.3"
+version = "0.2.4"
 description = "Small single-process RL post-training for LLMs on Apple Silicon with MLX."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,8 +18,8 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "mlx>=0.31.2; python_version < '3.15' and platform_system == 'Darwin' and platform_machine == 'arm64'",
-    "mlx-lm>=0.31.3; python_version < '3.15' and platform_system == 'Darwin' and platform_machine == 'arm64'",
+    "mlx>=0.32.2; python_version < '3.15' and platform_system == 'Darwin' and platform_machine == 'arm64'",
+    "mlx-lm>=0.32.0; python_version < '3.15' and platform_system == 'Darwin' and platform_machine == 'arm64'",
 ]
 
 [project.urls]
@@ -39,9 +39,17 @@ dev = [
     "pytest>=8.3.0",
     "ruff>=0.8.0",
 ]
+ci = [
+    "hatchling==1.32.4",
+    "pip-audit==2.10.1",
+    "pyright>=1.1.390",
+    "pytest>=8.3.0",
+    "ruff>=0.8.0",
+    "twine==7.0.0",
+]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [tool.uv]
@@ -52,6 +60,7 @@ exclude-newer-package = { certifi = "1 day", pillow = "1 day" }
 
 [tool.hatch.build.targets.sdist]
 include = [
+    ".github/scripts",
     "benchmarks",
     "examples",
     "mlxrl",
@@ -61,8 +70,10 @@ include = [
     "DESIGN.md",
     "LICENSE",
     "README.md",
+    "SECURITY.md",
     "THIRD_PARTY_LICENSES.md",
     "pyproject.toml",
+    "uv.lock",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -84,7 +95,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"
 reportMissingTypeStubs = "none"
-include = ["mlxrl", "tests", "benchmarks"]
+include = ["mlxrl", "tests", "benchmarks", ".github/scripts"]
 
 [tool.pytest.ini_options]
 markers = [

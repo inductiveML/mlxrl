@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, cast
 
 import mlx.core as mx
@@ -15,11 +16,28 @@ from mlxrl.policy.model import (
     count_parameters,
     enable_grad_checkpointing,
     inject_lora_adapters,
+    load_policy_with_lora,
     lora_module_counts_by_layer,
     strict_lora_config,
 )
 
 pytestmark = pytest.mark.metal
+
+
+def test_model_loading_rejects_custom_code_without_executing_it(tmp_path) -> None:
+    marker = tmp_path / "executed.txt"
+    (tmp_path / "config.json").write_text(json.dumps({"model_file": "custom.py"}))
+    (tmp_path / "custom.py").write_text(
+        "from pathlib import Path\n"
+        "Path(__file__).with_name('executed.txt').write_text('executed')\n"
+        "raise RuntimeError('custom model code ran')\n"
+    )
+    mx.save_safetensors(tmp_path / "model.safetensors", {"dummy": mx.array([0.0])})
+
+    with pytest.raises(ValueError, match="trust_remote_code"):
+        load_policy_with_lora(str(tmp_path))
+
+    assert not marker.exists()
 
 
 class ToyDenseAttention(nn.Module):
