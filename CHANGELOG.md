@@ -9,8 +9,8 @@ and this project uses semantic versioning once releases are cut.
 
 ### Security
 
-- Require MLX-LM 0.32.0 or later with its MLX 0.32.2 minimum, and disable custom model Python
-  execution in library, example, and benchmark loaders. The older minimum
+- Require MLX-LM 0.32.0 or later with its MLX 0.32.2 minimum, and disable custom
+  model and tokenizer Python execution in library, example, and benchmark loaders. The older minimum
   allowed the unsafe `model_file` behavior addressed by upstream's
   [CVE-2026-5843 fix](https://github.com/ml-explore/mlx-lm/pull/1385).
 - Parse answer and action tags in linear time to prevent malformed model

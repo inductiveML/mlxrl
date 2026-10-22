@@ -288,7 +288,9 @@ def load_policy_with_lora(
     """Load a 4-bit MLX-LM policy and attach trainable LoRA adapters."""
 
     lora_config = config or LoRAConfig()
-    loaded = load(model_id, trust_remote_code=False)
+    loaded = load(
+        model_id, tokenizer_config={"trust_remote_code": False}, trust_remote_code=False
+    )
     model = loaded[0]
     tokenizer = loaded[1]
     target_keys = inject_lora_adapters(model, lora_config)

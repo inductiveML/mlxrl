@@ -536,7 +536,9 @@ def run_mlx_lm_worker(args: argparse.Namespace) -> BenchResult:
 
     set_mlx_wired_limit(mx, args.wired_limit_mb)
     mx.random.seed(args.seed)
-    loaded = mlx_lm.load(args.model, trust_remote_code=False)
+    loaded = mlx_lm.load(
+        args.model, tokenizer_config={"trust_remote_code": False}, trust_remote_code=False
+    )
     model = loaded[0]
     tokenizer = loaded[1]
     sampler = make_sampler(

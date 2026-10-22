@@ -107,7 +107,9 @@ def main() -> None:
         top_k=int(sampling_config["top_k"]),
     )
     prompt = naming_prompt(args.prompt)
-    base_model, base_tokenizer = load(str(run["model_id"]), trust_remote_code=False)
+    base_model, base_tokenizer = load(
+        str(run["model_id"]), tokenizer_config={"trust_remote_code": False}, trust_remote_code=False
+    )
     if hasattr(base_model, "eval"):
         base_model.eval()
     base = sample_name(
