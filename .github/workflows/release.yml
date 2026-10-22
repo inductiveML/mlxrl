@@ -76,6 +76,12 @@ jobs:
       - name: Check distribution metadata
         run: uv run --no-sync twine check dist/*
 
+      - name: Check pinned publisher runtime without publishing credentials
+        uses: docker://ghcr.io/pypa/gh-action-pypi-publish@sha256:411241df99067c98b6d08fd8e26d14e86740a22460599c2af571e6dc26e27ffc
+        with:
+          entrypoint: /usr/local/bin/python
+          args: -c "import twine, sigstore, pypi_attestations; print('Publisher runtime imports passed')"
+
       - name: Upload distribution artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
