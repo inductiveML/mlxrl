@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -13,9 +12,12 @@ from mlxrl.env.base import StepResult
 def default_action_parser(text: str) -> str:
     """Extract <action>...</action> when present, otherwise return stripped text."""
 
-    match = re.search(r"<action>\s*(.*?)\s*</action>", text, flags=re.DOTALL)
-    if match is not None:
-        return match.group(1).strip()
+    opening = text.find("<action>")
+    if opening != -1:
+        start = opening + len("<action>")
+        closing = text.find("</action>", start)
+        if closing != -1:
+            return text[start:closing].strip()
     return text.strip()
 
 

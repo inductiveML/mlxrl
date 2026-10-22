@@ -18,6 +18,9 @@ fields may change before a 1.0 release.
 
 ## Quickstart
 
+Requires Apple Silicon, Python 3.11–3.14, MLX 0.32.2+, and MLX-LM 0.32.0+.
+See [SECURITY.md](SECURITY.md) for model trust boundaries and private reporting.
+
 ```bash
 git clone https://github.com/inductiveML/mlxrl.git
 cd mlxrl

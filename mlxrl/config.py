@@ -247,6 +247,12 @@ def validate_output_path(value: str, field_name: str = "output") -> Path:
     output_path = Path(value.strip())
     if output_path.is_absolute() or ".." in output_path.parts:
         raise ConfigError(f"{field_name} must be a relative path inside the working directory.")
+    try:
+        contained = output_path.resolve().is_relative_to(Path.cwd().resolve())
+    except (OSError, RuntimeError) as error:
+        raise ConfigError(f"{field_name} could not be resolved safely.") from error
+    if not contained:
+        raise ConfigError(f"{field_name} must be a relative path inside the working directory.")
     return output_path
 
 

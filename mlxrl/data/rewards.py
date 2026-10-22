@@ -9,7 +9,8 @@ from typing import TypeAlias
 RewardFn: TypeAlias = Callable[..., float]
 
 _REWARD_REGISTRY: dict[str, RewardFn] = {}
-_ANSWER_TAG_RE = re.compile(r"<answer>\s*(.*?)\s*</answer>", re.IGNORECASE | re.DOTALL)
+_ANSWER_OPEN_RE = re.compile(r"<answer>", re.IGNORECASE)
+_ANSWER_CLOSE_RE = re.compile(r"</answer>", re.IGNORECASE)
 _NUMBER_RE = re.compile(r"[-+]?(?:\d[\d,]*)(?:\.\d+)?")
 
 
@@ -49,9 +50,8 @@ def extract_answer(text: str | None) -> str | None:
 
     if text is None:
         return None
-    tagged = _ANSWER_TAG_RE.search(text)
-    if tagged:
-        answer = tagged.group(1).strip()
+    answer = _answer_tag_content(text)
+    if answer is not None:
         return answer or None
     if "####" in text:
         answer = text.rsplit("####", maxsplit=1)[-1].strip()
@@ -94,8 +94,15 @@ def extract_answer_from_tag(text: str | None) -> str | None:
 
     if text is None:
         return None
-    tagged = _ANSWER_TAG_RE.search(text)
-    if not tagged:
+    return _answer_tag_content(text) or None
+
+
+def _answer_tag_content(text: str) -> str | None:
+    # Fixed delimiters avoid backtracking or repeated body rescans on malformed output.
+    opening = _ANSWER_OPEN_RE.search(text)
+    if opening is None:
         return None
-    answer = tagged.group(1).strip()
-    return answer or None
+    closing = _ANSWER_CLOSE_RE.search(text, opening.end())
+    if closing is None:
+        return None
+    return text[opening.end() : closing.start()].strip()

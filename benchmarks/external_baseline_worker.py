@@ -317,7 +317,9 @@ def run_mlx_lm_lora(args: argparse.Namespace) -> BenchResult:
         prompt_token_lengths = [
             encoded_prompt_token_count(tokenizer, row["prompt"]) for row in rows
         ]
-        ref_loaded = load(args.model)
+        ref_loaded = load(
+            args.model, tokenizer_config={"trust_remote_code": False}, trust_remote_code=False
+        )
         ref_model = ref_loaded[0]
         ref_model.freeze()
         optimizer = optim.Adam(learning_rate=args.learning_rate)
@@ -453,6 +455,7 @@ def run_mlx_tune(args: argparse.Namespace) -> BenchResult:
         model_name=args.model,
         max_seq_length=args.max_context,
         load_in_4bit=True,
+        trust_remote_code=False,
     )
     prompt_token_lengths = [
         encoded_prompt_token_count(tokenizer, row["prompt"]) for row in rows

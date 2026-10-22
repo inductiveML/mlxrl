@@ -1,0 +1,5 @@
+# Review changes that control package publication or dependency resolution.
+/.github/ @avp1598
+/pyproject.toml @avp1598
+/uv.lock @avp1598
+/SECURITY.md @avp1598

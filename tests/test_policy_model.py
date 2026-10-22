@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 from typing import Any, cast
 
 import mlx.core as mx
 import mlx.nn as nn
 import pytest
+from mlx.utils import tree_flatten
+from mlx_lm.models.llama import Model, ModelArgs
 from mlx_lm.tuner.lora import LoRALinear
 
 from mlxrl.policy.model import (
@@ -15,11 +18,66 @@ from mlxrl.policy.model import (
     count_parameters,
     enable_grad_checkpointing,
     inject_lora_adapters,
+    load_policy_with_lora,
     lora_module_counts_by_layer,
     strict_lora_config,
 )
 
 pytestmark = pytest.mark.metal
+
+
+def test_model_loading_rejects_custom_code_without_executing_it(tmp_path) -> None:
+    marker = tmp_path / "executed.txt"
+    (tmp_path / "config.json").write_text(json.dumps({"model_file": "custom.py"}))
+    (tmp_path / "custom.py").write_text(
+        "from pathlib import Path\n"
+        "Path(__file__).with_name('executed.txt').write_text('executed')\n"
+        "raise RuntimeError('custom model code ran')\n"
+    )
+    mx.save_safetensors(tmp_path / "model.safetensors", {"dummy": mx.array([0.0])})
+
+    with pytest.raises(ValueError, match="trust_remote_code"):
+        load_policy_with_lora(str(tmp_path))
+
+    assert not marker.exists()
+
+
+def test_tokenizer_loading_rejects_custom_code_without_prompting(tmp_path, monkeypatch) -> None:
+    config = {
+        "model_type": "llama",
+        "hidden_size": 8,
+        "num_hidden_layers": 1,
+        "intermediate_size": 16,
+        "num_attention_heads": 2,
+        "rms_norm_eps": 1e-5,
+        "vocab_size": 16,
+    }
+    model = Model(ModelArgs.from_dict(config))
+    mx.save_safetensors(tmp_path / "model.safetensors", dict(tree_flatten(model.parameters())))
+    (tmp_path / "config.json").write_text(json.dumps(config))
+    (tmp_path / "tokenizer_config.json").write_text(
+        json.dumps(
+            {
+                "tokenizer_class": "CustomTokenizer",
+                "auto_map": {"AutoTokenizer": ["tokenization_custom.CustomTokenizer", None]},
+            }
+        )
+    )
+    marker = tmp_path / "tokenizer-executed.txt"
+    (tmp_path / "tokenization_custom.py").write_text(
+        "from pathlib import Path\n"
+        "Path(__file__).with_name('tokenizer-executed.txt').write_text('executed')\n"
+        "raise RuntimeError('custom tokenizer code ran')\n"
+    )
+
+    def reject_prompt(*args, **kwargs):
+        pytest.fail("Loading a model must not prompt to execute tokenizer code.")
+
+    monkeypatch.setattr("builtins.input", reject_prompt)
+    with pytest.raises(ValueError, match="trust_remote_code"):
+        load_policy_with_lora(str(tmp_path))
+
+    assert not marker.exists()
 
 
 class ToyDenseAttention(nn.Module):

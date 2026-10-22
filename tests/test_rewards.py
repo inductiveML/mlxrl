@@ -52,3 +52,10 @@ def test_format_reward_requires_non_empty_answer_tag() -> None:
     assert format_reward("some work <answer>4</answer>") == 1.0
     assert format_reward("some work <answer> </answer>") == 0.0
     assert format_reward("some work #### 4") == 0.0
+
+
+def test_answer_tags_preserve_case_whitespace_and_empty_tag_precedence() -> None:
+    assert extract_answer("work <ANSWER>\n\t42\u2003</AnSwEr>") == "42"
+    assert extract_answer("5 <answer> </answer> #### 9") is None
+    assert extract_answer("<answer>first <answer>second</answer>") == "first <answer>second"
+    assert extract_answer("<answer>unfinished #### 7") == "7"
