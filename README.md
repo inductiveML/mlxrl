@@ -330,6 +330,55 @@ import concrete algorithm implementations.
 | GSPO | sequence-level, length-normalized importance ratio and clipping |
 | RLOO | leave-one-out group baseline, no critic, no std-normalized advantage |
 | GiGPO | multi-turn episode advantage plus anchor-state step advantage |
+| Score centering (experimental) | centered rewards, token-mean REINFORCE with sampler-score correction |
+
+### Experimental score centering
+
+Score centering is an explicit single-turn opt-in based on
+[Marek and Ryabinin, 2026](https://arxiv.org/abs/2609.20807). Existing algorithm
+defaults and old-policy recompute semantics stay unchanged.
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run mlxrl train \
+  --config examples/qwen3_0_6b_score_centering.toml \
+  --available-memory-gb 48
+```
+
+The config selects the objective and the number of sampler candidates to retain:
+
+```toml
+[algorithm]
+name = "score-centering"
+score_centering_top_k = 128
+```
+
+This objective uses group-centered rewards without standard-deviation scaling.
+The sampler records probabilities **after top-p, min-p, top-k, and temperature**,
+including the selected token's probability even when it falls outside the
+recorded head. Greedy sampling is recorded as a point mass. Candidate
+probabilities retain their original mass; the trainer approximates the remaining
+tail as described in the paper. The correction coefficients are detached, and
+trainer logprobs are normalized in fp32. `kl_beta` remains the independent
+adapter-disabled reference-model penalty.
+
+For the import API, construct `ScoreCenteringAlgorithm(sampler_top_k=128)` from
+`mlxrl.algo` and use `SamplingConfig(record_sampler_top_k=128)` for generation.
+Pass the resulting completions and that algorithm to `batch_from_rollouts` and
+`optimizer_step`. Missing sampler records are rejected. `Completion.sampler_trace`
+contains the selected-token and candidate probabilities; config-driven runs also
+save `sampler_logprobs`, `sampler_topk_ids`, and `sampler_topk_logprobs` in the
+output NPZ. Ordinary `old_policy_logprobs` remain separate.
+
+Capture works with naive, prefix-cached, batched, and compiled single-turn
+rollouts and preserves seeded token draws. The objective supports token-weighted
+micro-batching. Multi-turn/ECHO training is outside this initial experiment.
+The memory preflight estimates have not been calibrated for this objective.
+Its benefit and overhead on a particular model must be measured; the paper's
+large-model results do not establish a benefit for MLX QLoRA.
+
+The reproducible paired benchmark is `benchmarks/run_score_centering.py`; its
+protocol and measured results are in
+[the 4-bit benchmark report](benchmarks/results/score_centering_4bit_2026-10-30.md).
 
 ## Memory Preflight
 

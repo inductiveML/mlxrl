@@ -59,13 +59,19 @@ class AlgorithmConfig:
     gigpo_omega: float = 1.0
     gigpo_gamma: float = 1.0
     gigpo_normalization: str = "std"
+    score_centering_top_k: int = 128
 
     def validate(self) -> None:
         normalized = normalize_algorithm_name(self.name)
-        if normalized not in {"grpo", "dr-grpo", "dapo", "gspo", "rloo", "gigpo"}:
+        if normalized not in {
+            "grpo", "dr-grpo", "dapo", "gspo", "rloo", "gigpo", "score-centering"
+        }:
             raise ConfigError(
-                "algorithm.name must be one of: grpo, dr-grpo, dapo, gspo, rloo, gigpo."
+                "algorithm.name must be one of: grpo, dr-grpo, dapo, gspo, rloo, gigpo, "
+                "score-centering."
             )
+        if type(self.score_centering_top_k) is not int or self.score_centering_top_k < 1:
+            raise ConfigError("algorithm.score_centering_top_k must be a positive integer.")
         if self.clip_low is not None and self.clip_low < 0:
             raise ConfigError("algorithm.clip_low must be non-negative or null.")
         if self.clip_high is not None and self.clip_high < 0:
@@ -166,6 +172,10 @@ class TrainConfig:
         self.optimizer.validate()
         self.sampling.validate()
         self.algorithm.validate()
+        if normalize_algorithm_name(self.algorithm.name) == "score-centering" and (
+            self.max_turns != 1 or self.echo_alpha != 0
+        ):
+            raise ConfigError("Experimental score centering supports single-turn training only.")
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any]) -> TrainConfig:

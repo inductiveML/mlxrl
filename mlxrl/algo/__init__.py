@@ -27,6 +27,7 @@ from mlxrl.algo.grpo import (
     sequence_importance_ratio,
     token_importance_ratio,
 )
+from mlxrl.algo.score_centering import ScoreCenteringAlgorithm, score_centering_correction
 
 __all__ = [
     "AlgorithmLossMetrics",
@@ -38,6 +39,7 @@ __all__ = [
     "GiGPOAlgorithm",
     "PolicyAlgorithm",
     "RLOOAlgorithm",
+    "ScoreCenteringAlgorithm",
     "algorithm_by_name",
     "anchor_state_groups",
     "anchor_state_step_advantages",
@@ -50,6 +52,7 @@ __all__ = [
     "group_normalize_rewards",
     "grpo_loss",
     "masked_mean",
+    "score_centering_correction",
     "sequence_importance_ratio",
     "token_importance_ratio",
 ]

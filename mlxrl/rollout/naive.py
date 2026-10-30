@@ -15,6 +15,8 @@ import mlx.nn as nn
 from mlx_lm.models.cache import make_prompt_cache
 from mlx_lm.sample_utils import make_sampler
 
+from mlxrl.sampling import SamplerToken, capture_sampler_tokens
+
 
 @dataclass(frozen=True)
 class SamplingConfig:
@@ -25,6 +27,11 @@ class SamplingConfig:
     top_p: float = 0.95
     min_p: float = 0.0
     top_k: int = 0
+    record_sampler_top_k: int = 0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.record_sampler_top_k, int) or self.record_sampler_top_k < 0:
+            raise ValueError("record_sampler_top_k must be a non-negative integer.")
 
 
 @dataclass(frozen=True)
@@ -37,6 +44,7 @@ class Completion:
     completion_tokens: tuple[int, ...]
     old_policy_logprobs: tuple[float, ...]
     text: str
+    sampler_trace: tuple[SamplerToken, ...] | None = None
 
 
 def eos_token_ids_from_tokenizer(tokenizer: Any) -> frozenset[int]:
@@ -87,6 +95,7 @@ def generate_completion(
     prompt_tokens: Sequence[int],
     config: SamplingConfig,
     eos_token_ids: frozenset[int] | None = None,
+    sampler_trace: list[SamplerToken] | None = None,
 ) -> tuple[tuple[int, ...], tuple[float, ...], str]:
     """Generate one completion with a fresh KV cache and no group sharing."""
 
@@ -121,6 +130,8 @@ def generate_completion(
         token_id = int(next_token)
         completion.append(token_id)
         old_policy_logprobs.append(float(sampled_logprob))
+        if sampler_trace is not None:
+            sampler_trace.append(capture_sampling_step(logprobs, next_token, config)[0])
         if token_id in eos_ids:
             break
         current = next_token
@@ -138,6 +149,18 @@ def sampled_token_logprobs(logprobs: mx.array, token_ids: mx.array) -> mx.array:
     return mx.squeeze(
         mx.take_along_axis(logprobs, token_ids[:, None], axis=-1),
         axis=-1,
+    )
+
+
+def capture_sampling_step(
+    logprobs: mx.array, tokens: mx.array, config: SamplingConfig
+) -> tuple[SamplerToken, ...]:
+    """Capture the same law used by make_sampler without consuming RNG."""
+
+    return capture_sampler_tokens(
+        logprobs, tokens, record_top_k=config.record_sampler_top_k,
+        temperature=config.temperature, top_p=config.top_p,
+        min_p=config.min_p, top_k=config.top_k,
     )
 
 
@@ -166,12 +189,14 @@ def generate_group_rollouts(
             use_chat_template=use_chat_template,
         )
         for group_index in range(group_size):
+            trace: list[SamplerToken] | None = [] if config.record_sampler_top_k else None
             completion_tokens, old_policy_logprobs, text = generate_completion(
                 model=model,
                 tokenizer=tokenizer,
                 prompt_tokens=prompt_tokens,
                 config=config,
                 eos_token_ids=eos_ids,
+                sampler_trace=trace,
             )
             completions.append(
                 Completion(
@@ -181,6 +206,7 @@ def generate_group_rollouts(
                     completion_tokens=completion_tokens,
                     old_policy_logprobs=old_policy_logprobs,
                     text=text,
+                    sampler_trace=None if trace is None else tuple(trace),
                 )
             )
     return tuple(completions)

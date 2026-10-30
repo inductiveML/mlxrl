@@ -88,6 +88,21 @@ def test_train_config_rejects_incoherent_values() -> None:
         TrainConfig.from_mapping({"group_size": 0})
 
 
+def test_score_centering_is_opt_in_and_validated() -> None:
+    assert TrainConfig().algorithm.name == "grpo"
+    config = TrainConfig.from_mapping(
+        {"algorithm": {"name": "score-centering", "score_centering_top_k": 32}}
+    )
+    assert config.algorithm.score_centering_top_k == 32
+    for invalid in [0, -1, 1.5, True]:
+        with pytest.raises(ConfigError, match="score_centering_top_k"):
+            TrainConfig.from_mapping(
+                {"algorithm": {"name": "score-centering", "score_centering_top_k": invalid}}
+            )
+    with pytest.raises(ConfigError, match="single-turn"):
+        TrainConfig.from_mapping({"max_turns": 2, "algorithm": {"name": "score-centering"}})
+
+
 def test_train_config_rejects_invalid_multiturn_fields() -> None:
     with pytest.raises(ConfigError, match="max_turns"):
         TrainConfig.from_mapping({"max_turns": 0})

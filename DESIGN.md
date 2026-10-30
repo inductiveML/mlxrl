@@ -37,6 +37,13 @@ than widening the single-turn `Algorithm` contract. GiGPO is the first
 implementation: the rollout engine records env-provided state ids, while the
 algorithm owns anchor-state grouping and credit assignment.
 
+The experimental single-turn `SamplerAwareAlgorithm` sibling extends the loss
+input with a recorded sampler head and corresponding full-forward trainer
+logprobs. The engine dispatches through that protocol when a prepared batch has
+sampler records; it still imports no algorithm implementations. The first user
+is score centering, a token-mean REINFORCE objective with centered rewards.
+Existing algorithms continue through the original protocol and probability path.
+
 ## Agentic Environment Seam
 
 Agentic rollout is built around `EnvFactory(task, seed, group_index) ->
@@ -85,6 +92,17 @@ masked down to action-token spans only. Rollout-time cached logprobs remain
 diagnostic data, not training data.
 
 ## Memory As A First-Class Constraint
+
+Experimental score centering captures the actual categorical sampling law after
+filtering and temperature, rather than treating raw model logprobs as sampler
+probabilities. Records contain the selected-token probability and a top-k head;
+the head is not renormalized. Persistent capture storage scales with completion
+tokens times k, rather than vocabulary size. All gradient-bearing candidate
+logprobs come from the trainer's full-forward path with fp32 normalization.
+The detached tail correction follows equations 8--10 of arXiv:2609.20807, using
+an exact zero sampler tail when its head exhausts all mass and a 1e-6 floor on
+the trainer tail for numerical stability. This path is opt-in, single-turn only,
+and requires separate measured memory and stability gates.
 
 Apple Silicon's unified memory is the deployment target, not an afterthought.
 The code supports per-layer MLX-LM gradient checkpointing because DeltaNet and

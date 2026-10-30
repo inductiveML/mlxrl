@@ -19,11 +19,13 @@ from mlx_lm.sample_utils import apply_min_p, apply_top_k, apply_top_p, make_samp
 from mlxrl.rollout.naive import (
     Completion,
     SamplingConfig,
+    capture_sampling_step,
     decode_completion,
     encode_chat_prompt,
     eos_token_ids_from_tokenizer,
     sampled_token_logprobs,
 )
+from mlxrl.sampling import SamplerToken
 
 
 @dataclass(frozen=True)
@@ -263,6 +265,7 @@ def generate_from_prefix_cache(
     config: SamplingConfig,
     eos_token_ids: frozenset[int],
     compile_decode_step: bool = False,
+    sampler_trace: list[SamplerToken] | None = None,
 ) -> tuple[tuple[int, ...], tuple[float, ...], str]:
     """Decode one completion from a cloned prefix cache."""
 
@@ -286,6 +289,8 @@ def generate_from_prefix_cache(
     token_id = int(next_token)
     completion.append(token_id)
     old_policy_logprobs.append(float(sampled_logprob))
+    if sampler_trace is not None:
+        sampler_trace.append(capture_sampling_step(prefix.first_logprobs, next_token, config)[0])
     if token_id in eos_token_ids:
         return (
             tuple(completion),
@@ -313,6 +318,8 @@ def generate_from_prefix_cache(
         token_id = int(next_token)
         completion.append(token_id)
         old_policy_logprobs.append(float(sampled_logprob))
+        if sampler_trace is not None:
+            sampler_trace.append(capture_sampling_step(logprobs, next_token, config)[0])
         if token_id in eos_token_ids:
             break
         current = next_token
@@ -332,6 +339,7 @@ def generate_group_from_prefix_cache(
     config: SamplingConfig,
     eos_token_ids: frozenset[int],
     compile_decode_step: bool = False,
+    sampler_traces: list[list[SamplerToken]] | None = None,
 ) -> tuple[tuple[tuple[int, ...], tuple[float, ...], str], ...]:
     """Decode a whole prompt group in one batched KV cache when safe."""
 
@@ -343,6 +351,7 @@ def generate_group_from_prefix_cache(
         config=config,
         eos_token_ids=eos_token_ids,
         compile_decode_step=compile_decode_step,
+        sampler_traces=sampler_traces,
     )
 
 
@@ -354,6 +363,7 @@ def generate_prompt_set_from_prefix_caches(
     config: SamplingConfig,
     eos_token_ids: frozenset[int],
     compile_decode_step: bool = False,
+    sampler_traces: list[list[SamplerToken]] | None = None,
 ) -> tuple[tuple[tuple[int, ...], tuple[float, ...], str], ...]:
     """Decode all prompt groups together with completion-major RNG keys."""
 
@@ -365,6 +375,8 @@ def generate_prompt_set_from_prefix_caches(
         raise ValueError("At least one prefix cache is required.")
 
     row_count = len(prefixes) * group_size
+    if sampler_traces is not None and len(sampler_traces) != row_count:
+        raise ValueError("sampler_traces must contain one list per completion.")
     start_random_state = _current_random_state()
     draw_keys: list[list[mx.array]] | None = None
     final_random_state: mx.array | None = None
@@ -401,17 +413,26 @@ def generate_prompt_set_from_prefix_caches(
         sampled_logprob,
     )
     current = next_token
+    first_records = (
+        capture_sampling_step(first_logprobs, next_token, config)
+        if sampler_traces is not None else None
+    )
     for row_index, (token_id, logprob) in enumerate(
         zip(_token_ids(next_token), _logprob_values(sampled_logprob), strict=True)
     ):
         rows[row_index].append(token_id)
         old_policy_logprob_rows[row_index].append(logprob)
+        if sampler_traces is not None and first_records is not None:
+            sampler_traces[row_index].append(first_records[row_index])
         if token_id in eos_token_ids:
             active[row_index] = False
             early_eos = config.max_tokens > 1
 
     if early_eos and draw_keys is not None:
         _set_random_state(start_random_state)
+        if sampler_traces is not None:
+            for trace in sampler_traces:
+                trace.clear()
         return _generate_prompt_set_sequentially(
             model=model,
             tokenizer=tokenizer,
@@ -420,6 +441,7 @@ def generate_prompt_set_from_prefix_caches(
             config=config,
             eos_token_ids=eos_token_ids,
             compile_decode_step=compile_decode_step,
+            sampler_traces=sampler_traces,
         )
     if not any(active):
         return _rollout_rows_to_outputs(tokenizer, rows, old_policy_logprob_rows)
@@ -443,6 +465,10 @@ def generate_prompt_set_from_prefix_caches(
             None if draw_keys is None else [row[step] for row in draw_keys],
         )
         sampled_logprob = sampled_token_logprobs(logprobs, next_token)
+        records = (
+            capture_sampling_step(logprobs, next_token, config)
+            if sampler_traces is not None else None
+        )
         mx.eval(  # Rollout sync: materialize sampled tokens/logprobs for append/EOS-check.
             next_token,
             sampled_logprob,
@@ -454,12 +480,17 @@ def generate_prompt_set_from_prefix_caches(
                 continue
             rows[row_index].append(token_id)
             old_policy_logprob_rows[row_index].append(logprob)
+            if sampler_traces is not None and records is not None:
+                sampler_traces[row_index].append(records[row_index])
             if token_id in eos_token_ids:
                 active[row_index] = False
                 early_eos = step < config.max_tokens - 1
         current = next_token
         if early_eos and draw_keys is not None:
             _set_random_state(start_random_state)
+            if sampler_traces is not None:
+                for trace in sampler_traces:
+                    trace.clear()
             return _generate_prompt_set_sequentially(
                 model=model,
                 tokenizer=tokenizer,
@@ -468,6 +499,7 @@ def generate_prompt_set_from_prefix_caches(
                 config=config,
                 eos_token_ids=eos_token_ids,
                 compile_decode_step=compile_decode_step,
+                sampler_traces=sampler_traces,
             )
         if not any(active):
             break
@@ -487,9 +519,10 @@ def _generate_prompt_set_sequentially(
     config: SamplingConfig,
     eos_token_ids: frozenset[int],
     compile_decode_step: bool,
+    sampler_traces: list[list[SamplerToken]] | None = None,
 ) -> tuple[tuple[tuple[int, ...], tuple[float, ...], str], ...]:
     outputs: list[tuple[tuple[int, ...], tuple[float, ...], str]] = []
-    for prefix in prefixes:
+    for prompt_index, prefix in enumerate(prefixes):
         outputs.extend(
             generate_from_prefix_cache(
                 model=model,
@@ -498,8 +531,12 @@ def _generate_prompt_set_sequentially(
                 config=config,
                 eos_token_ids=eos_token_ids,
                 compile_decode_step=compile_decode_step,
+                sampler_trace=(
+                    sampler_traces[prompt_index * group_size + group_index]
+                    if sampler_traces is not None else None
+                ),
             )
-            for _ in range(group_size)
+            for group_index in range(group_size)
         )
     return tuple(outputs)
 
@@ -643,6 +680,10 @@ def generate_prefix_cached_group_rollouts(
         prefixes.append(prefill_prompt_once(model, prompt_tokens))
 
     if batch_groups:
+        traces = (
+            [[] for _ in range(len(prefixes) * group_size)]
+            if config.record_sampler_top_k else None
+        )
         batched_outputs = generate_prompt_set_from_prefix_caches(
             model=model,
             tokenizer=tokenizer,
@@ -651,6 +692,7 @@ def generate_prefix_cached_group_rollouts(
             config=config,
             eos_token_ids=eos_ids,
             compile_decode_step=compile_decode_step,
+            sampler_traces=traces,
         )
         for row_index, (completion_tokens, old_policy_logprobs, text) in enumerate(
             batched_outputs
@@ -665,6 +707,7 @@ def generate_prefix_cached_group_rollouts(
                     completion_tokens=completion_tokens,
                     old_policy_logprobs=old_policy_logprobs,
                     text=text,
+                    sampler_trace=None if traces is None else tuple(traces[row_index]),
                 )
             )
         return tuple(completions)
@@ -672,20 +715,17 @@ def generate_prefix_cached_group_rollouts(
     for prompt_index, (prompt_tokens, prefix) in enumerate(
         zip(prompt_tokens_by_index, prefixes, strict=True)
     ):
-        group_outputs = tuple(
-            generate_from_prefix_cache(
+        for group_index in range(group_size):
+            trace: list[SamplerToken] | None = [] if config.record_sampler_top_k else None
+            completion_tokens, old_policy_logprobs, text = generate_from_prefix_cache(
                 model=model,
                 tokenizer=tokenizer,
                 prefix=prefix,
                 config=config,
                 eos_token_ids=eos_ids,
                 compile_decode_step=compile_decode_step,
+                sampler_trace=trace,
             )
-            for _ in range(group_size)
-        )
-        for group_index, (completion_tokens, old_policy_logprobs, text) in enumerate(
-            group_outputs
-        ):
             completions.append(
                 Completion(
                     prompt_index=prompt_index,
@@ -694,6 +734,7 @@ def generate_prefix_cached_group_rollouts(
                     completion_tokens=completion_tokens,
                     old_policy_logprobs=old_policy_logprobs,
                     text=text,
+                    sampler_trace=None if trace is None else tuple(trace),
                 )
             )
     return tuple(completions)

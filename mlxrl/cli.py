@@ -23,6 +23,7 @@ from mlxrl.algo.grpo import (
     group_normalize_rewards,
     grpo_loss,
 )
+from mlxrl.algo.score_centering import ScoreCenteringAlgorithm
 from mlxrl.algorithm import Algorithm
 from mlxrl.config import (
     AlgorithmConfig,
@@ -170,6 +171,7 @@ def _algorithm_from_args(args: argparse.Namespace) -> Algorithm:
             drgrpo_normalize_rewards=args.drgrpo_normalize_rewards,
             drgrpo_loss_reduction=args.drgrpo_loss_reduction,
             drgrpo_max_tokens=args.drgrpo_max_tokens,
+            score_centering_top_k=getattr(args, "score_centering_top_k", 128),
         ),
         max_completion_len=args.max_tokens,
         dapo_default_clip_low=0.2 if args.clip_low == "default" else None,
@@ -191,6 +193,8 @@ def _algorithm_from_algorithm_config(
     name = normalize_algorithm_name(algorithm.name)
     if name == "grpo":
         return GRPOAlgorithm()
+    if name == "score-centering":
+        return ScoreCenteringAlgorithm(sampler_top_k=algorithm.score_centering_top_k)
     if name == "dr-grpo":
         return DrGRPOAlgorithm(
             normalize_rewards=algorithm.drgrpo_normalize_rewards,
@@ -355,6 +359,7 @@ def _phase1_gsm8k(args: argparse.Namespace) -> int:
     pad_token_id = pad_token_id_from_tokenizer(tokenizer)
     sampling = _sampling_config(args)
     algorithm = getattr(args, "_algorithm_override", None) or _algorithm_from_args(args)
+    sampling = replace(sampling, record_sampler_top_k=getattr(algorithm, "sampler_top_k", 0))
     print(f"algorithm: {algorithm.name}")
 
     reward_history: list[float] = []
@@ -452,6 +457,11 @@ def _phase1_gsm8k(args: argparse.Namespace) -> int:
         loss=mx.array(final_metrics.loss, dtype=mx.float32),
         kl=mx.array(final_metrics.kl, dtype=mx.float32),
         clip_fraction=mx.array(final_metrics.clip_fraction, dtype=mx.float32),
+        **({
+            "sampler_logprobs": final_batch.sampler.logprobs,
+            "sampler_topk_ids": final_batch.sampler.topk_ids,
+            "sampler_topk_logprobs": final_batch.sampler.topk_logprobs,
+        } if final_batch.sampler is not None else {}),
     )
     print(f"reference_output: {output}")
     return 0
@@ -479,6 +489,7 @@ def _namespace_from_train_config(config: TrainConfig) -> argparse.Namespace:
         micro_batch_size=config.micro_batch_size,
         algorithm_config=config.algorithm,
         algorithm=config.algorithm.name,
+        score_centering_top_k=config.algorithm.score_centering_top_k,
         max_turns=config.max_turns,
         rollout_mode=config.rollout_mode,
         env_name=config.env_name,
@@ -857,7 +868,7 @@ def build_parser() -> argparse.ArgumentParser:
     gsm8k.add_argument("--learning-rate", type=float, default=1e-5)
     gsm8k.add_argument(
         "--algorithm",
-        choices=["grpo", "dr-grpo", "dapo", "gspo", "rloo"],
+        choices=["grpo", "dr-grpo", "dapo", "gspo", "rloo", "score-centering"],
         default="grpo",
     )
     gsm8k.add_argument(
@@ -883,6 +894,10 @@ def build_parser() -> argparse.ArgumentParser:
         default="sequence_max_tokens",
     )
     gsm8k.add_argument("--drgrpo-max-tokens", type=int, default=None)
+    gsm8k.add_argument(
+        "--score-centering-top-k", type=int, default=128,
+        help="Sampler candidates to record for experimental score centering.",
+    )
     gsm8k.add_argument("--rank", type=int, default=8)
     gsm8k.add_argument("--scale", type=float, default=20.0)
     gsm8k.add_argument("--dropout", type=float, default=0.0)
@@ -901,7 +916,10 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--steps", type=int, default=None)
     train.add_argument("--group-size", type=int, default=None)
     train.add_argument("--max-tokens", type=int, default=None)
-    train.add_argument("--algorithm", choices=["grpo", "dr-grpo", "dapo", "gspo", "rloo", "gigpo"])
+    train.add_argument(
+        "--algorithm",
+        choices=["grpo", "dr-grpo", "dapo", "gspo", "rloo", "gigpo", "score-centering"],
+    )
     train.add_argument("--beta", type=float, default=None)
     train.add_argument("--seed", type=int, default=None)
     train.add_argument("--output", default=None)

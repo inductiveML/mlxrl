@@ -44,3 +44,12 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 - License: MIT per installed package metadata.
 - Used for: benchmark configuration inspection and external baseline adapter
   patterns only. No `mlx-lm-lora` implementation code is vendored in `mlxrl`.
+
+## Score centering research
+
+- Martin Marek and Max Ryabinin, *Score Centering Stabilizes Off-policy
+  Reinforcement Learning* (2026): https://arxiv.org/abs/2609.20807.
+- The experimental MLX objective implements the mathematics in equations 8--10
+  with independently written MLX code and explicit gradient-equivalence tests.
+  The paper is a research reference, not an installed dependency. This objective
+  is distinct from Tinker's StableReinforce service implementation.
