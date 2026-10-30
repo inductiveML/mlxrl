@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import mlx.core as mx
 import mlx.nn as nn
 import mlx.optimizers as optim
-from mlx.utils import tree_map
+from mlx.utils import tree_flatten, tree_map
 
-from mlxrl.algorithm import Algorithm, AlgorithmLossMetrics
+from mlxrl.algorithm import Algorithm, AlgorithmLossMetrics, SamplerAwareAlgorithm
 from mlxrl.policy.logprobs import (
     CompletionLogprobInputs,
     CompletionLogprobs,
@@ -22,6 +22,7 @@ from mlxrl.policy.logprobs import (
 )
 from mlxrl.policy.model import enable_grad_checkpointing, temporary_eval_mode
 from mlxrl.rollout.naive import Completion
+from mlxrl.sampling import SamplerBatch, sampler_batch_from_traces
 from mlxrl.train.reference import reference_logprobs_for_loss
 
 
@@ -38,6 +39,7 @@ class GRPOBatch:
     mask: mx.array
     reference_is_policy: bool = False
     logprob_inputs: CompletionLogprobInputs | None = None
+    sampler: SamplerBatch | None = None
 
 
 @dataclass(frozen=True)
@@ -54,6 +56,7 @@ class StepMetrics:
     loss_echo: float = 0.0
     echo_accuracy: float = 0.0
     echo_alpha: float = 0.0
+    gradient_norm: float | None = None
 
 
 def _slice_batch(batch: GRPOBatch, start: int, end: int) -> GRPOBatch:
@@ -78,6 +81,7 @@ def _slice_batch(batch: GRPOBatch, start: int, end: int) -> GRPOBatch:
         mask=batch.mask[start:end, :width],
         reference_is_policy=batch.reference_is_policy,
         logprob_inputs=logprob_inputs,
+        sampler=batch.sampler.slice(start, end, width) if batch.sampler is not None else None,
     )
 
 
@@ -132,6 +136,12 @@ def batch_from_rollouts(
         enable_grad_checkpointing(model)
     prompt_token_ids = tuple(completion.prompt_tokens for completion in completions)
     completion_token_ids = tuple(completion.completion_tokens for completion in completions)
+    sampler = (
+        sampler_batch_from_traces(
+            [completion.sampler_trace for completion in completions], completion_token_ids
+        )
+        if getattr(algorithm, "sampler_top_k", 0) else None
+    )
     logprob_inputs = prepare_completion_logprob_inputs(
         prompt_token_ids,
         completion_token_ids,
@@ -170,6 +180,7 @@ def batch_from_rollouts(
         mask=dual.mask,
         reference_is_policy=not compute_reference,
         logprob_inputs=logprob_inputs,
+        sampler=sampler,
     )
     return algorithm.filter_batch(batch, group_structure=group_size)
 
@@ -217,21 +228,30 @@ def grpo_metrics_from_batch(
 
     if use_checkpoint:
         enable_grad_checkpointing(model)
-    current = (
-        completion_logprobs_from_inputs(
-            model,
-            batch.logprob_inputs,
-            use_checkpoint=use_checkpoint,
+    if batch.sampler is not None:
+        inputs = batch.logprob_inputs or prepare_completion_logprob_inputs(
+            batch.prompt_token_ids, batch.completion_token_ids, pad_token_id
         )
-        if batch.logprob_inputs is not None
-        else completion_logprobs(
-            model,
-            batch.prompt_token_ids,
-            batch.completion_token_ids,
-            pad_token_id,
-            use_checkpoint=use_checkpoint,
+        current = completion_logprobs_from_inputs(
+            model, inputs, use_checkpoint=use_checkpoint,
+            candidate_token_ids=batch.sampler.topk_ids,
         )
-    )
+    else:
+        current = (
+            completion_logprobs_from_inputs(
+                model,
+                batch.logprob_inputs,
+                use_checkpoint=use_checkpoint,
+            )
+            if batch.logprob_inputs is not None
+            else completion_logprobs(
+                model,
+                batch.prompt_token_ids,
+                batch.completion_token_ids,
+                pad_token_id,
+                use_checkpoint=use_checkpoint,
+            )
+        )
     reference_logprobs = reference_logprobs_for_loss(
         current.logprobs,
         batch.reference_logprobs,
@@ -239,6 +259,18 @@ def grpo_metrics_from_batch(
         reference_is_policy=batch.reference_is_policy,
         batch_kind="GRPO batch",
     )
+    if batch.sampler is not None:
+        if current.candidate_logprobs is None:
+            raise RuntimeError("Sampler-aware loss requires candidate trainer logprobs.")
+        return cast(SamplerAwareAlgorithm, algorithm).compute_sampler_loss(
+            policy_logprobs=current.logprobs,
+            trainer_head_logprobs=current.candidate_logprobs,
+            sampler=batch.sampler,
+            reference_logprobs=reference_logprobs,
+            advantages=batch.advantages,
+            completion_mask=batch.mask,
+            beta=beta,
+        )
     return algorithm.compute_loss(
         policy_logprobs=current.logprobs,
         old_policy_logprobs=batch.old_policy_logprobs,
@@ -337,6 +369,14 @@ def optimizer_step(
             )
     if gradients is None:
         raise RuntimeError("Micro-batch gradient accumulation produced no gradients.")
+    gradient_norm = (
+        mx.sqrt(sum(
+            (mx.sum(cast(mx.array, gradient).astype(mx.float32) ** 2)
+             for _, gradient in tree_flatten(gradients)),
+            mx.array(0.0, dtype=mx.float32),
+        ))
+        if batch.sampler is not None else None
+    )
     mean_reward = mx.mean(batch.rewards)
     mx.eval(  # Optimizer pre-step sync: freeze gradients/diagnostics before weight mutation.
         gradients,
@@ -348,6 +388,8 @@ def optimizer_step(
         mean_reward,
     )
     optimizer.update(model, gradients)
+    if gradient_norm is not None:
+        mx.eval(gradient_norm)  # Materialize the pre-update gradient diagnostic.
     mx.eval(  # Optimizer sync: materialize updated adapter weights and optimizer state.
         model.state,
         optimizer.state,
@@ -360,6 +402,7 @@ def optimizer_step(
         mean_ratio=float(mean_ratio),
         clip_fraction=float(clip_fraction),
         mean_reward=float(mean_reward),
+        gradient_norm=None if gradient_norm is None else float(gradient_norm),
     )
 
 

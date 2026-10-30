@@ -13,6 +13,8 @@ from typing import Any, Protocol
 
 import mlx.core as mx
 
+from mlxrl.sampling import SamplerBatch
+
 
 @dataclass(frozen=True)
 class AlgorithmLossMetrics:
@@ -101,3 +103,21 @@ class TrajectoryAlgorithm(Protocol):
 
 
 PolicyAlgorithm = Algorithm
+
+
+class SamplerAwareAlgorithm(Algorithm, Protocol):
+    """Single-turn objective requiring recorded behavior-policy candidates."""
+
+    @property
+    def sampler_top_k(self) -> int: ...
+
+    def compute_sampler_loss(
+        self,
+        policy_logprobs: mx.array,
+        trainer_head_logprobs: mx.array,
+        sampler: SamplerBatch,
+        reference_logprobs: mx.array,
+        advantages: mx.array,
+        completion_mask: mx.array,
+        beta: float,
+    ) -> AlgorithmLossMetrics: ...

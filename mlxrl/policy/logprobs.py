@@ -26,6 +26,7 @@ class CompletionLogprobs:
 
     logprobs: mx.array
     mask: mx.array
+    candidate_logprobs: mx.array | None = None
 
 
 @dataclass(frozen=True)
@@ -156,18 +157,26 @@ def completion_logprobs_from_inputs(
     model: nn.Module,
     inputs: CompletionLogprobInputs,
     use_checkpoint: bool = False,
+    candidate_token_ids: mx.array | None = None,
 ) -> CompletionLogprobs:
     """Gather completion-token logprobs from prebuilt full-forward tensors."""
 
     head = _completion_head(model)
+    candidate_logprobs = None
     if head is None:
         logits = _completion_forward(model, inputs.input_ids, use_checkpoint=use_checkpoint)
-        target_logprobs = target_logprobs_from_logits(logits, inputs.target_ids)
-        completion_logprob_values = mx.take_along_axis(
-            target_logprobs,
-            inputs.gather_indices,
-            axis=1,
-        )
+        if candidate_token_ids is None:
+            target_logprobs = target_logprobs_from_logits(logits, inputs.target_ids)
+            completion_logprob_values = mx.take_along_axis(
+                target_logprobs,
+                inputs.gather_indices,
+                axis=1,
+            )
+        else:
+            index = inputs.gather_indices[..., None]
+            completion_logits = mx.take_along_axis(
+                logits, mx.broadcast_to(index, (*index.shape[:2], logits.shape[-1])), axis=1
+            )
     else:
         backbone = model.model
         assert backbone is not None
@@ -179,7 +188,22 @@ def completion_logprobs_from_inputs(
             axis=1,
         )
         targets = mx.take_along_axis(inputs.target_ids, inputs.gather_indices, axis=1)
-        completion_logprob_values = target_logprobs_from_logits(head(hidden), targets)
+        completion_logits = head(hidden)
+        if candidate_token_ids is None:
+            completion_logprob_values = target_logprobs_from_logits(completion_logits, targets)
+    if candidate_token_ids is not None:
+        if candidate_token_ids.shape[:2] != inputs.mask.shape:
+            raise ValueError("Candidate token IDs must align with completion tokens.")
+        # Score-centering probabilities and tail masses need fp32 normalization.
+        completion_logits = completion_logits.astype(mx.float32)
+        normalizer = mx.logsumexp(completion_logits, axis=-1, keepdims=True)
+        targets = mx.take_along_axis(inputs.target_ids, inputs.gather_indices, axis=1)
+        completion_logprob_values = (
+            mx.take_along_axis(completion_logits, targets[..., None], axis=-1) - normalizer
+        ).squeeze(-1)
+        candidate_logprobs = (
+            mx.take_along_axis(completion_logits, candidate_token_ids, axis=-1) - normalizer
+        )
     completion_logprob_values = completion_logprob_values * inputs.mask.astype(
         completion_logprob_values.dtype
     )
@@ -187,6 +211,7 @@ def completion_logprobs_from_inputs(
     return CompletionLogprobs(
         logprobs=completion_logprob_values,
         mask=inputs.mask,
+        candidate_logprobs=candidate_logprobs,
     )
 
 

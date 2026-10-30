@@ -4,13 +4,29 @@ import argparse
 
 from mlxrl.algo.gigpo import GiGPOAlgorithm
 from mlxrl.algo.grpo import DAPOAlgorithm, DrGRPOAlgorithm, GSPOAlgorithm
+from mlxrl.algo.score_centering import ScoreCenteringAlgorithm
 from mlxrl.cli import (
     _algorithm_from_args,
     _algorithm_from_config,
     _env_factory_from_config,
     _trajectory_algorithm_from_config,
+    build_parser,
 )
 from mlxrl.config import AlgorithmConfig, TrainConfig
+
+
+def test_cli_and_config_enable_experimental_score_centering() -> None:
+    args = build_parser().parse_args([
+        "phase1-gsm8k", "--algorithm", "score-centering", "--score-centering-top-k", "32"
+    ])
+    algorithm = _algorithm_from_args(args)
+    assert isinstance(algorithm, ScoreCenteringAlgorithm)
+    assert algorithm.sampler_top_k == 32
+    from_config = _algorithm_from_config(TrainConfig(
+        algorithm=AlgorithmConfig(name="score-centering", score_centering_top_k=32)
+    ))
+    assert isinstance(from_config, ScoreCenteringAlgorithm)
+    assert from_config == algorithm
 
 
 def test_algorithm_from_args_and_config_share_dapo_defaults() -> None:

@@ -5,6 +5,25 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses semantic versioning once releases are cut.
 
+## [0.3.0] - 2026-10-30
+
+Score centering is experimental and disabled by default. Existing configurations
+continue to use GRPO. Enable it explicitly with `[algorithm] name = "score-centering"`.
+The local benchmarks do not establish a reliable quality or long-run stability gain.
+
+### Added
+
+- Experimental, opt-in single-turn score centering with actual post-filter,
+  post-temperature sampler probabilities, detached top-k/tail correction,
+  fp32 trainer probabilities, and micro-batch support.
+- Correctness gates for exact gradients, drift cancellation, sampling laws,
+  seeded capture parity across rollout engines, and padded optimizer updates.
+- A paired multi-seed 4-bit QLoRA benchmark with raw training diagnostics.
+
+### Changed
+
+- Update locked filelock to 4.2.1 and Ruff to 0.17.1, and pin setup-uv 10.3.2.
+
 ## [0.2.4] - 2026-10-22
 
 ### Security

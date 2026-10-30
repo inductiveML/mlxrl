@@ -1,0 +1,26 @@
+{"kind": "capture_manifest", "source_sha256": "60576153b59bb776e143bff203f2944f26070525eb33ba6fe19f4fc8ca9d2d18", "model_revision": "73e3e38d981303bc594367cd910ea6eb48349da8"}
+{"kind": "capture_timing", "seed": 7, "repeat": 0, "capture_k": 0, "seconds": 0.3273140420205891, "tokens": 28, "peak_memory_gb": 0.517498246}
+{"kind": "capture_timing", "seed": 7, "repeat": 0, "capture_k": 128, "seconds": 0.34108308295253664, "tokens": 28, "peak_memory_gb": 0.51749863}
+{"kind": "capture_timing", "seed": 7, "repeat": 1, "capture_k": 128, "seconds": 0.34891724993940443, "tokens": 28, "peak_memory_gb": 0.51749863}
+{"kind": "capture_timing", "seed": 7, "repeat": 1, "capture_k": 0, "seconds": 0.3443850000621751, "tokens": 28, "peak_memory_gb": 0.517498246}
+{"kind": "capture_timing", "seed": 7, "repeat": 2, "capture_k": 0, "seconds": 0.3830455830320716, "tokens": 28, "peak_memory_gb": 0.517498622}
+{"kind": "capture_timing", "seed": 7, "repeat": 2, "capture_k": 128, "seconds": 0.5488673329818994, "tokens": 28, "peak_memory_gb": 0.51538364}
+{"kind": "capture_timing", "seed": 7, "repeat": 3, "capture_k": 128, "seconds": 0.9187114579835907, "tokens": 28, "peak_memory_gb": 0.513908318}
+{"kind": "capture_timing", "seed": 7, "repeat": 3, "capture_k": 0, "seconds": 0.6922149170422927, "tokens": 28, "peak_memory_gb": 0.473783592}
+{"kind": "capture_timing", "seed": 17, "repeat": 0, "capture_k": 0, "seconds": 0.9325452920747921, "tokens": 48, "peak_memory_gb": 0.502868564}
+{"kind": "capture_timing", "seed": 17, "repeat": 0, "capture_k": 128, "seconds": 0.7451813749503344, "tokens": 48, "peak_memory_gb": 0.510068482}
+{"kind": "capture_timing", "seed": 17, "repeat": 1, "capture_k": 128, "seconds": 0.7241079579107463, "tokens": 48, "peak_memory_gb": 0.495641928}
+{"kind": "capture_timing", "seed": 17, "repeat": 1, "capture_k": 0, "seconds": 0.6611757089849561, "tokens": 48, "peak_memory_gb": 0.517498054}
+{"kind": "capture_timing", "seed": 17, "repeat": 2, "capture_k": 0, "seconds": 0.630594625021331, "tokens": 48, "peak_memory_gb": 0.516251236}
+{"kind": "capture_timing", "seed": 17, "repeat": 2, "capture_k": 128, "seconds": 0.6693284580251202, "tokens": 48, "peak_memory_gb": 0.517498438}
+{"kind": "capture_timing", "seed": 17, "repeat": 3, "capture_k": 128, "seconds": 0.6493582080584019, "tokens": 48, "peak_memory_gb": 0.51749863}
+{"kind": "capture_timing", "seed": 17, "repeat": 3, "capture_k": 0, "seconds": 0.6330480830511078, "tokens": 48, "peak_memory_gb": 0.517498054}
+{"kind": "capture_timing", "seed": 27, "repeat": 0, "capture_k": 0, "seconds": 0.63487595890183, "tokens": 49, "peak_memory_gb": 0.517497478}
+{"kind": "capture_timing", "seed": 27, "repeat": 0, "capture_k": 128, "seconds": 0.6607246669009328, "tokens": 49, "peak_memory_gb": 0.517498438}
+{"kind": "capture_timing", "seed": 27, "repeat": 1, "capture_k": 128, "seconds": 0.6550477920100093, "tokens": 49, "peak_memory_gb": 0.517497862}
+{"kind": "capture_timing", "seed": 27, "repeat": 1, "capture_k": 0, "seconds": 0.6459599999943748, "tokens": 49, "peak_memory_gb": 0.517498438}
+{"kind": "capture_timing", "seed": 27, "repeat": 2, "capture_k": 0, "seconds": 0.6520619579823688, "tokens": 49, "peak_memory_gb": 0.517497862}
+{"kind": "capture_timing", "seed": 27, "repeat": 2, "capture_k": 128, "seconds": 0.6850266250548884, "tokens": 49, "peak_memory_gb": 0.517498436}
+{"kind": "capture_timing", "seed": 27, "repeat": 3, "capture_k": 128, "seconds": 0.6704110410064459, "tokens": 49, "peak_memory_gb": 0.517498438}
+{"kind": "capture_timing", "seed": 27, "repeat": 3, "capture_k": 0, "seconds": 0.6548743330640718, "tokens": 49, "peak_memory_gb": 0.517498246}
+{"kind": "capture_summary", "paired_runs": 12, "all_tokens_identical": true}

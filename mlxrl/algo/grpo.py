@@ -577,6 +577,10 @@ def algorithm_by_name(name: str) -> PolicyAlgorithm:
     normalized = name.lower().replace("_", "-")
     if normalized == "grpo":
         return GRPOAlgorithm()
+    if normalized == "score-centering":
+        from mlxrl.algo.score_centering import ScoreCenteringAlgorithm
+
+        return ScoreCenteringAlgorithm()
     if normalized in {"dr-grpo", "drgrpo"}:
         return DrGRPOAlgorithm()
     if normalized == "dapo":
