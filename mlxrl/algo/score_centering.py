@@ -1,6 +1,7 @@
 """Experimental score centering, arXiv:2609.20807, equations 8--10.
 
-This implementation uses group-centered rewards and token-mean reduction.
+Defaults use group-centered rewards and token-mean reduction; normalized rewards
+and sequence-mean reduction are explicit options.
 It is a single-turn REINFORCE variant, with an optional independent reference
 KL penalty. It does not implement Tinker's proprietary StableReinforce loss.
 """

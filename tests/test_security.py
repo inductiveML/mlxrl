@@ -28,6 +28,18 @@ else:
     subprocess.run([sys.executable, "-c", script, tag, kind], check=True, timeout=5)
 
 
+def test_confidence_answer_marker_scan_is_bounded_on_long_whitespace() -> None:
+    # One decoded token isolates text scanning from prefix-alignment work.
+    script = """
+from mlxrl.data.confidence import arithmetic_steps
+class Tokenizer:
+    def decode(self, ids):
+        return ' ' * 100_000 + 'X'
+assert arithmetic_steps(Tokenizer(), [1]) == ()
+"""
+    subprocess.run([sys.executable, "-c", script], check=True, timeout=5)
+
+
 @pytest.mark.parametrize("existing_file", [False, True])
 def test_output_path_rejects_symlinks_outside_the_working_directory(
     tmp_path, monkeypatch, existing_file: bool

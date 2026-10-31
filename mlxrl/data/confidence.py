@@ -38,9 +38,10 @@ class ConfidenceExtractor(Protocol):
     ) -> tuple[ConfidenceStep, ...]: ...
 
 
-_RESULT = re.compile(r"=\s*([+\-\u2212]?\d+(?:\.\d+)?)\b(?![.\d]|\s*[+*/\u2212-])")
+_NUMBER = r"[+\-\u2212]?(?:\d+(?:,\d+)*(?:\.\d+)?|\.\d+)(?:[eE][+\-]?\d+)?"
+_RESULT = re.compile(r"=\s*(" + _NUMBER + r")(?![\w.]|,\s*\d|\s*[+*/\u2212-])")
 _OPERATOR = re.compile(r"[\w)]\s*[+*/\u2212-]\s*[+\-\u2212]?[\w(]")
-_ANSWER = re.compile(r"\s*(?:ANSWER\s*:|FINAL\s*:|####|---|<answer>|</think>)", re.IGNORECASE)
+_ANSWER = re.compile(r"(?:ANSWER\s*:|FINAL\s*:|####|---|<answer>|</think>)", re.IGNORECASE)
 
 
 def arithmetic_steps(
@@ -69,7 +70,7 @@ def arithmetic_steps(
     steps = []
     pos = 0
     answer = _ANSWER.search(text)
-    reasoning = text[: answer.start()] if answer else text
+    reasoning = text[: answer.start()].rstrip() if answer else text
     for line in reasoning.splitlines(keepends=True):
         start, end = pos, pos + len(line)
         pos = end
@@ -83,7 +84,8 @@ def arithmetic_steps(
         segment = TokenSpan(indices[0], indices[-1] + 1)
         values = []
         valid = True
-        for match in _RESULT.finditer(line):
+        matches = list(_RESULT.finditer(line))
+        for match in matches:
             a, b = start + match.start(1), start + match.end(1)
             hits = [i for i, (x, y) in enumerate(bounds) if x < b and y > a]
             if not hits or hits[0] < segment.start or hits[-1] >= segment.end:
@@ -91,7 +93,11 @@ def arithmetic_steps(
                 break
             values.append(TokenSpan(hits[0], hits[-1] + 1))
         if valid:
-            results = (values[-1],) if values and _OPERATOR.search(line) else ()
+            # An unfinished final assignment must not reuse an earlier root value.
+            last_equal = line.rfind("=")
+            complete = bool(matches) and matches[-1].start() == last_equal
+            arithmetic = _OPERATOR.search(line[:last_equal])
+            results = (values[-1],) if complete and arithmetic else ()
             steps.append(ConfidenceStep(segment, results, tuple(values)))
     return tuple(steps)
 

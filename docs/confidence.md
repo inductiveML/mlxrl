@@ -112,6 +112,10 @@ policy gradient. MLXRL's default GRPO and default score-centering modes differ
 from that recipe. Keep normalization, reduction, prompts and sampler settings
 fixed when toggling CONF. The supplied example leaves score centering off;
 `benchmarks/run_confidence.py` explicitly tests both choices independently.
+CONF leaves optimizer settings with the caller. The MLX screening uses a constant
+learning rate and no gradient clipping; RAMP's original training also used a
+learning-rate warmup and gradient clipping. The screening is a library integration
+check with matched controls, rather than a replication of that complete recipe.
 
 The short screening uses three seeds, four arms, a pinned local 4-bit model,
 two-hop arithmetic and held-out arithmetic examples. Training time includes

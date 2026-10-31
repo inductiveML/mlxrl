@@ -227,7 +227,7 @@ class ConfidenceWarmStart:
             scale * p991 if median else None,
             mixed_groups,
             scored,
-            sum(sum(x != 0 for x in cr) for cr in credits),
+            sum(sum(x != 0 for x in cr) for cr in credits) if scale else 0,
             held,
             capped,
         )

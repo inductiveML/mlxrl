@@ -116,6 +116,8 @@ def test_hold_scale_uniform_groups_resume_and_update_nine_exact_handoff():
         controller.apply(source, [steps()] * 4, update=update, group_size=2)
     resumed = ConfidenceWarmStart(config)
     resumed.load_state_dict(controller.state_dict())
+    with pytest.raises(ValueError, match="already"):
+        resumed.apply(carried, (), update=9, group_size=2)
     missing_records = replace(source, confidence_logprobs=None)
     result, metrics = resumed.apply(missing_records, (), update=9, group_size=2)
     assert result is missing_records
@@ -137,6 +139,15 @@ def test_cap_applies_to_held_scale_and_no_credit_is_exact_noop():
     assert result is source
     result, _ = ConfidenceWarmStart().apply(source, (), update=1, group_size=2)
     assert result is source
+
+
+def test_no_initial_calibration_signal_reports_no_applied_credit():
+    source = replace(batch(), rewards=mx.zeros(4), advantages=mx.zeros(4))
+    controller = ConfidenceWarmStart(ConfidenceConfig(enabled=True))
+    result, metrics = controller.apply(source, [steps()] * 4, update=1, group_size=2)
+    assert result is source and metrics.scale == 0
+    assert metrics.scored_steps == 8 and metrics.credited_tokens == 0
+    assert controller.previous_scale is None
 
 
 def test_controller_rejects_missing_records_incomplete_groups_and_double_credit():
@@ -170,6 +181,36 @@ def test_token_advantage_gradient_matches_ramp_formula(reduction):
         0,
         atol=0,
     )
+
+
+@pytest.mark.parametrize("reduction", ["sequence_mean", "token_mean"])
+def test_score_centered_token_credit_gradient_matches_exact_categorical_formula(reduction):
+    # With the complete sampler support, the score-centered derivative is
+    # -A * (one_hot(sample) - q), independently of the current trainer p.
+    logits = mx.array(np.arange(24).reshape(2, 3, 4) / 10, dtype=mx.float32)
+    q = mx.broadcast_to(mx.array([0.1, 0.4, 0.2, 0.3]), (2, 3, 4))
+    selected = mx.array([[0, 1, 2], [3, 2, 0]])
+    ids = mx.broadcast_to(mx.arange(4), q.shape)
+    sampler = SamplerBatch(
+        mx.take_along_axis(mx.log(q), selected[..., None], axis=-1).squeeze(-1),
+        ids,
+        mx.log(q),
+    )
+    mask = mx.array([[1, 1, 1], [1, 1, 0]])
+    advantage = mx.array([[0.2, -0.4, 0.3], [-0.2, 0.6, 0.9]])
+    algorithm = ScoreCenteringAlgorithm(sampler_top_k=4, loss_reduction=reduction)
+
+    def loss(z, a):
+        logp = z - mx.logsumexp(z, axis=-1, keepdims=True)
+        taken = mx.take_along_axis(logp, selected[..., None], axis=-1).squeeze(-1)
+        return algorithm.compute_sampler_loss(taken, logp, sampler, taken, a, mask, 0).loss
+
+    denominator = np.array([[6], [4]]) if reduction == "sequence_mean" else 5
+    weight = np.asarray(advantage) * np.asarray(mask) / denominator
+    one_hot = np.eye(4)[np.asarray(selected)]
+    expected = -weight[..., None] * (one_hot - np.asarray(q))
+    np.testing.assert_allclose(mx.grad(lambda z: loss(z, advantage))(logits), expected, atol=2e-7)
+    np.testing.assert_allclose(mx.grad(lambda a: loss(logits, a))(advantage), 0, atol=0)
 
 
 def model(quantized=False):

@@ -319,8 +319,8 @@ def optimizer_step(
     sequence_mean = getattr(algorithm, "sequence_mean_reduction", False)
     if chunked and not (algorithm.token_mean_reduction or sequence_mean):
         raise ValueError(
-            "micro_batch_size currently supports token-mean policy losses only; "
-            f"{algorithm.name} uses sequence-level reduction."
+            "micro_batch_size requires token-mean loss or explicit sequence-mean support; "
+            f"{algorithm.name} does not provide either."
         )
     model.train()
 

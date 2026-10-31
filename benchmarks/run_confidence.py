@@ -20,6 +20,7 @@ import sys
 import time
 from dataclasses import asdict
 from pathlib import Path
+from typing import cast
 
 import mlx.core as mx
 import mlx.optimizers as optim
@@ -194,10 +195,12 @@ def worker(args):
         )
         if update == 8:
             evaluate(update)
-    adapter_values = [v for _, v in tree_flatten(model.trainable_parameters())]
+    adapter_values = cast(
+        list[mx.array], [v for _, v in tree_flatten(model.trainable_parameters())]
+    )
     if not all(bool(mx.all(mx.isfinite(v))) for v in adapter_values):
         raise RuntimeError("Nonfinite final adapter weights.")
-    adapter_norm = float(mx.sqrt(sum(mx.sum(v * v) for v in adapter_values)))
+    adapter_norm = float(mx.sqrt(cast(mx.array, sum(mx.sum(v * v) for v in adapter_values))))
     final = evaluate(args.steps)
     emit(
         {

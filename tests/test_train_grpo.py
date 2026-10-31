@@ -222,7 +222,7 @@ def test_optimizer_step_rejects_micro_batching_for_sequence_reductions() -> None
     model = _model()
     optimizer = optim.SGD(learning_rate=0.01)
 
-    with pytest.raises(ValueError, match="token-mean policy losses only"):
+    with pytest.raises(ValueError, match="explicit sequence-mean support"):
         optimizer_step(
             model,
             optimizer,

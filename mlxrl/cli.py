@@ -143,8 +143,14 @@ def _gsm8k_prompt(args: argparse.Namespace, index: int) -> tuple[str, str]:
         else format_gsm8k_answer_only_prompt(example)
     )
     if getattr(args, "prompt_format", "default") == "arithmetic_steps":
-        prompt = ("Solve the math problem.\nQuestion: " + example.question
-                  + ARITHMETIC_CONFIDENCE_INSTRUCTION)
+        prompt = (
+            "Solve the math problem." + ARITHMETIC_CONFIDENCE_INSTRUCTION
+            + "\n\nQuestion: Mia has 2 coins, gets 3 more, then spends 1. How many remain?"
+            "\nAnswer:\nstep: 2 + 3 = 5\nstep: 5 - 1 = 4\n<answer>4</answer>"
+            "\n\nQuestion: Sam buys 3 packs of 4 pens and gives away 2 pens. How many remain?"
+            "\nAnswer:\nstep: 3 * 4 = 12\nstep: 12 - 2 = 10\n<answer>10</answer>"
+            + "\n\nQuestion: " + example.question + "\nAnswer:\n"
+        )
     return prompt, example.answer
 
 
