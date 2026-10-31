@@ -40,6 +40,8 @@ class GRPOBatch:
     reference_is_policy: bool = False
     logprob_inputs: CompletionLogprobInputs | None = None
     sampler: SamplerBatch | None = None
+    token_advantages: mx.array | None = None
+    confidence_logprobs: mx.array | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +84,10 @@ def _slice_batch(batch: GRPOBatch, start: int, end: int) -> GRPOBatch:
         reference_is_policy=batch.reference_is_policy,
         logprob_inputs=logprob_inputs,
         sampler=batch.sampler.slice(start, end, width) if batch.sampler is not None else None,
+        token_advantages=(batch.token_advantages[start:end, :width]
+                          if batch.token_advantages is not None else None),
+        confidence_logprobs=(batch.confidence_logprobs[start:end, :width]
+                             if batch.confidence_logprobs is not None else None),
     )
 
 
@@ -125,6 +131,7 @@ def batch_from_rollouts(
     algorithm: Algorithm,
     use_checkpoint: bool = False,
     compute_reference: bool = True,
+    record_confidence: bool = False,
 ) -> GRPOBatch:
     """Compute old policy/ref logprobs and group-normalized advantages."""
 
@@ -156,6 +163,7 @@ def batch_from_rollouts(
             use_checkpoint=use_checkpoint,
             compute_reference=compute_reference,
             prepared_inputs=logprob_inputs,
+            record_confidence=record_confidence,
         )
         if compute_reference:
             mx.eval(  # Logprob sync: freeze old-policy/ref logprobs before adapter mutation.
@@ -168,6 +176,8 @@ def batch_from_rollouts(
                 dual.policy,
                 dual.mask,
             )
+        if dual.confidence_logprobs is not None:
+            mx.eval(dual.confidence_logprobs)  # Freeze confidence before any adapter mutation.
     reward_array = mx.array(list(rewards), dtype=mx.float32)
     advantages = algorithm.compute_advantages(reward_array, group_structure=group_size)
     batch = GRPOBatch(
@@ -181,6 +191,8 @@ def batch_from_rollouts(
         reference_is_policy=not compute_reference,
         logprob_inputs=logprob_inputs,
         sampler=sampler,
+        confidence_logprobs=(mx.stop_gradient(dual.confidence_logprobs)
+                             if dual.confidence_logprobs is not None else None),
     )
     return algorithm.filter_batch(batch, group_structure=group_size)
 
@@ -226,6 +238,13 @@ def grpo_metrics_from_batch(
 ) -> AlgorithmLossMetrics:
     """Recompute policy logprobs and evaluate GRPO metrics."""
 
+    advantages = batch.advantages
+    if batch.token_advantages is not None:
+        if not getattr(algorithm, "supports_token_advantages", False):
+            raise ValueError(f"{algorithm.name} does not support CONF token advantages.")
+        if batch.token_advantages.shape != batch.mask.shape:
+            raise ValueError("Token advantages must align with completion tokens.")
+        advantages = mx.stop_gradient(batch.token_advantages)
     if use_checkpoint:
         enable_grad_checkpointing(model)
     if batch.sampler is not None:
@@ -267,7 +286,7 @@ def grpo_metrics_from_batch(
             trainer_head_logprobs=current.candidate_logprobs,
             sampler=batch.sampler,
             reference_logprobs=reference_logprobs,
-            advantages=batch.advantages,
+            advantages=advantages,
             completion_mask=batch.mask,
             beta=beta,
         )
@@ -275,7 +294,7 @@ def grpo_metrics_from_batch(
         policy_logprobs=current.logprobs,
         old_policy_logprobs=batch.old_policy_logprobs,
         reference_logprobs=reference_logprobs,
-        advantages=batch.advantages,
+        advantages=advantages,
         completion_mask=batch.mask,
         beta=beta,
     )
@@ -297,7 +316,8 @@ def optimizer_step(
         raise ValueError("micro_batch_size must be non-negative.")
     num_completions = len(batch.completion_token_ids)
     chunked = 0 < micro_batch_size < num_completions
-    if chunked and not algorithm.token_mean_reduction:
+    sequence_mean = getattr(algorithm, "sequence_mean_reduction", False)
+    if chunked and not (algorithm.token_mean_reduction or sequence_mean):
         raise ValueError(
             "micro_batch_size currently supports token-mean policy losses only; "
             f"{algorithm.name} uses sequence-level reduction."
@@ -340,7 +360,8 @@ def optimizer_step(
         for start in range(0, num_completions, micro_batch_size):
             end = min(start + micro_batch_size, num_completions)
             sub = _slice_batch(batch, start, end)
-            weight = _completion_token_count(sub) / total_tokens
+            weight = ((end - start) / num_completions if sequence_mean
+                      else _completion_token_count(sub) / total_tokens)
             (sub_loss, sub_aux), sub_grad = nn.value_and_grad(
                 model,
                 lambda m, _s=sub: loss_fn(m, _s),
@@ -375,7 +396,7 @@ def optimizer_step(
              for _, gradient in tree_flatten(gradients)),
             mx.array(0.0, dtype=mx.float32),
         ))
-        if batch.sampler is not None else None
+        if batch.sampler is not None or batch.token_advantages is not None else None
     )
     mean_reward = mx.mean(batch.rewards)
     mx.eval(  # Optimizer pre-step sync: freeze gradients/diagnostics before weight mutation.

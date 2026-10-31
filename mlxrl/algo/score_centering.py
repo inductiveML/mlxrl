@@ -12,7 +12,12 @@ from typing import Any
 
 import mlx.core as mx
 
-from mlxrl.algo.grpo import _token_loss_metrics, group_center_rewards
+from mlxrl.algo.grpo import (
+    _token_loss_metrics,
+    group_center_rewards,
+    group_normalize_rewards,
+    token_advantages,
+)
 from mlxrl.algorithm import AlgorithmLossMetrics
 from mlxrl.sampling import SamplerBatch
 
@@ -48,16 +53,30 @@ class ScoreCenteringAlgorithm:
 
     sampler_top_k: int = 128
     name: str = "score-centering"
+    normalize_rewards: bool = False
+    loss_reduction: str = "token_mean"
 
     def __post_init__(self) -> None:
+        if self.loss_reduction not in {"token_mean", "sequence_mean"}:
+            raise ValueError("Score-centering loss_reduction must be token_mean or sequence_mean.")
         if type(self.sampler_top_k) is not int or self.sampler_top_k < 1:
             raise ValueError("sampler_top_k must be a positive integer.")
 
     @property
     def token_mean_reduction(self) -> bool:
+        return self.loss_reduction == "token_mean"
+
+    @property
+    def sequence_mean_reduction(self) -> bool:
+        return self.loss_reduction == "sequence_mean"
+
+    @property
+    def supports_token_advantages(self) -> bool:
         return True
 
     def compute_advantages(self, rewards: mx.array, group_structure: int) -> mx.array:
+        if self.normalize_rewards:
+            return group_normalize_rewards(rewards, group_structure)
         return group_center_rewards(rewards, group_structure)
 
     def filter_batch(self, batch: Any, group_structure: int) -> Any:
@@ -86,7 +105,9 @@ class ScoreCenteringAlgorithm:
         beta: float,
     ) -> AlgorithmLossMetrics:
         correction = score_centering_correction(trainer_head_logprobs, sampler.topk_logprobs)
-        token_loss = -advantages[:, None] * (policy_logprobs - correction)
+        token_loss = -token_advantages(advantages, policy_logprobs.shape) * (
+            policy_logprobs - correction
+        )
         return _token_loss_metrics(
             token_policy_gradient=token_loss,
             ratio=mx.exp(policy_logprobs - sampler.logprobs),
@@ -94,4 +115,5 @@ class ScoreCenteringAlgorithm:
             reference_logprobs=reference_logprobs,
             mask=completion_mask,
             beta=beta,
+            reduction=self.loss_reduction,
         )

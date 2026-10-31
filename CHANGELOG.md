@@ -5,6 +5,19 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses semantic versioning once releases are cut.
 
+## [Unreleased]
+
+### Added
+
+- Experimental, opt-in CONF warm-start credit for single-turn GRPO and score
+  centering, with raw fp32 confidence, explicit step/result spans, excluded value
+  and answer tokens, bounded calibration and an eight-update handoff.
+- Arithmetic step extraction, a runnable config, controller state serialization,
+  credit diagnostics and a matched multi-seed 4-bit screening harness.
+- Multiple prompt groups per CLI update and exact sequence-mean micro-batching
+  for GRPO and score centering. Score centering can explicitly normalize rewards
+  for comparisons with GRPO. Existing algorithm and reduction defaults are preserved.
+
 ## [0.3.0] - 2026-10-30
 
 Score centering is experimental and disabled by default. Existing configurations

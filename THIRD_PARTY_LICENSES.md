@@ -53,3 +53,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
   with independently written MLX code and explicit gradient-equivalence tests.
   The paper is a research reference, not an installed dependency. This objective
   is distinct from Tinker's StableReinforce service implementation.
+
+## CONF research
+
+- CONF warm-start credit was developed in the RAMP research project (CONF-5/6).
+- MLXRL independently implements its confidence-weighted token-credit mathematics.
+  No RAMP, PyTorch or vLLM implementation is vendored or required at runtime.

@@ -27,6 +27,7 @@ class CompletionLogprobs:
     logprobs: mx.array
     mask: mx.array
     candidate_logprobs: mx.array | None = None
+    confidence_logprobs: mx.array | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,7 @@ class DualLogprobs:
     policy: mx.array
     reference: mx.array
     mask: mx.array
+    confidence_logprobs: mx.array | None = None
 
 
 @contextmanager
@@ -158,6 +160,7 @@ def completion_logprobs_from_inputs(
     inputs: CompletionLogprobInputs,
     use_checkpoint: bool = False,
     candidate_token_ids: mx.array | None = None,
+    record_confidence: bool = False,
 ) -> CompletionLogprobs:
     """Gather completion-token logprobs from prebuilt full-forward tensors."""
 
@@ -172,7 +175,7 @@ def completion_logprobs_from_inputs(
                 inputs.gather_indices,
                 axis=1,
             )
-        else:
+        if candidate_token_ids is not None or record_confidence:
             index = inputs.gather_indices[..., None]
             completion_logits = mx.take_along_axis(
                 logits, mx.broadcast_to(index, (*index.shape[:2], logits.shape[-1])), axis=1
@@ -204,6 +207,12 @@ def completion_logprobs_from_inputs(
         candidate_logprobs = (
             mx.take_along_axis(completion_logits, candidate_token_ids, axis=-1) - normalizer
         )
+    confidence_logprobs = None
+    if record_confidence:
+        targets = mx.take_along_axis(inputs.target_ids, inputs.gather_indices, axis=1)
+        confidence_logprobs = target_logprobs_from_logits(
+            completion_logits.astype(mx.float32), targets
+        ) * inputs.mask
     completion_logprob_values = completion_logprob_values * inputs.mask.astype(
         completion_logprob_values.dtype
     )
@@ -212,6 +221,7 @@ def completion_logprobs_from_inputs(
         logprobs=completion_logprob_values,
         mask=inputs.mask,
         candidate_logprobs=candidate_logprobs,
+        confidence_logprobs=confidence_logprobs,
     )
 
 
@@ -293,28 +303,22 @@ def dual_logprobs(
     use_checkpoint: bool = False,
     compute_reference: bool = True,
     prepared_inputs: CompletionLogprobInputs | None = None,
+    record_confidence: bool = False,
 ) -> DualLogprobs:
     """Compute policy logprobs and reference logprobs using one model object."""
 
-    if prepared_inputs is None:
-        policy = completion_logprobs(
-            model,
-            prompt_token_ids,
-            completion_token_ids,
-            pad_token_id,
-            use_checkpoint=use_checkpoint,
-        )
-    else:
-        policy = completion_logprobs_from_inputs(
-            model,
-            prepared_inputs,
-            use_checkpoint=use_checkpoint,
-        )
+    inputs = prepared_inputs or prepare_completion_logprob_inputs(
+        prompt_token_ids, completion_token_ids, pad_token_id
+    )
+    policy = completion_logprobs_from_inputs(
+        model, inputs, use_checkpoint=use_checkpoint, record_confidence=record_confidence
+    )
     if not compute_reference:
         return DualLogprobs(
             policy=policy.logprobs,
             reference=mx.stop_gradient(policy.logprobs),
             mask=policy.mask,
+            confidence_logprobs=policy.confidence_logprobs,
         )
     with adapters_disabled(model):
         reference = prefix_cached_completion_logprobs(
@@ -331,6 +335,7 @@ def dual_logprobs(
         policy=policy.logprobs,
         reference=reference.logprobs,
         mask=policy.mask,
+        confidence_logprobs=policy.confidence_logprobs,
     )
 
 

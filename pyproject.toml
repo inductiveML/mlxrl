@@ -62,6 +62,7 @@ exclude-newer-package = { certifi = "1 day", pillow = "1 day" }
 include = [
     ".github/scripts",
     "benchmarks",
+    "docs",
     "examples",
     "mlxrl",
     "tests",
