@@ -104,6 +104,7 @@ Call the controller once for each optimizer update. Save `confidence.state_dict(
 with the model, optimizer, RNG and matching config when implementing checkpoint
 resume; restore with `load_state_dict()` and continue at the next update number.
 The CLI's NPZ is a diagnostic artifact, not a complete training checkpoint.
+Read it with `mlx.core.load` to preserve MLX's bfloat16 arrays.
 
 ## Comparison protocol
 
@@ -116,6 +117,8 @@ CONF leaves optimizer settings with the caller. The MLX screening uses a constan
 learning rate and no gradient clipping; RAMP's original training also used a
 learning-rate warmup and gradient clipping. The screening is a library integration
 check with matched controls, rather than a replication of that complete recipe.
+Memory preflight uses the existing baseline anchors; those estimates have not
+been calibrated for CONF's extra fp32 probability capture.
 
 The short screening uses three seeds, four arms, a pinned local 4-bit model,
 two-hop arithmetic and held-out arithmetic examples. Training time includes
@@ -128,3 +131,8 @@ result/answer exclusion, malformed spans, raw fp32 capture, frozen credit,
 uniform-group credit, scale caps, state restoration, exact handoff and padded
 float/4-bit micro-batch equivalence. Short arithmetic results do not establish
 RAMP's reported approximately 2× time-to-target improvement on MLX.
+
+The [completed 12-run report](../benchmarks/results/confidence_4bit_2026-11-01.md)
+includes all three seeds and both base objectives. Results are mixed for GRPO;
+the score-centering combination regressed on two seeds and tied on one. CONF
+remains an experimental opt-in.

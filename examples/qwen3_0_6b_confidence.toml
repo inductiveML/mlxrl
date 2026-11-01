@@ -5,6 +5,7 @@ quant_bits = 4
 group_size = 4
 groups_per_step = 4
 prompt_format = "arithmetic_steps"
+max_prompt_len = 512
 max_completion_len = 128
 steps = 16
 seed = 7

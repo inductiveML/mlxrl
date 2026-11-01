@@ -54,6 +54,7 @@ jobs:
           uv run --no-sync pytest
           tests/test_benchmark_metrics.py
           tests/test_config.py
+          tests/test_confidence_spans.py
           tests/test_import_direction.py
           tests/test_rewards.py
           tests/test_security.py
@@ -63,7 +64,9 @@ jobs:
         run: >
           uv run --no-sync pyright
           mlxrl/config.py
+          mlxrl/data/confidence.py
           tests/test_config.py
+          tests/test_confidence_spans.py
           tests/test_import_direction.py
           tests/test_rewards.py
           tests/test_security.py

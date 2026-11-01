@@ -421,6 +421,10 @@ not support DAPO filtering, GiGPO, ECHO or multi-turn credit.
 RAMP's reported speedup is specific to its research setup. The MLX arithmetic
 screening harness is `benchmarks/run_confidence.py`; it compares all four
 combinations across seeds, including sampling and confidence overhead.
+The [12-run 4-bit screening](benchmarks/results/confidence_4bit_2026-11-01.md)
+found mixed outcomes: CONF raised final GRPO accuracy on two seeds and lowered it
+on one; with score centering it lowered accuracy on two seeds and tied on one.
+These short runs do not establish a reliable gain or a 2× speedup.
 
 ## Memory Preflight
 
