@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from mlxrl.config import (
+    ConfidenceConfig,
     ConfigError,
     TrainConfig,
     effective_sequence_length,
@@ -10,6 +11,39 @@ from mlxrl.config import (
     memory_fit,
     validate_output_path,
 )
+
+
+def test_confidence_defaults_and_explicit_recipe():
+    assert not TrainConfig().confidence.enabled
+    assert TrainConfig().groups_per_step == 1
+    config = TrainConfig.from_mapping({
+        "groups_per_step": 4, "prompt_format": "arithmetic_steps",
+        "confidence": {"enabled": True},
+        "algorithm": {"name": "score-centering", "score_centering_normalize_rewards": True,
+                      "score_centering_loss_reduction": "sequence_mean"},
+    })
+    assert config.confidence.warmup_updates == 8
+    assert config.confidence.target_share == .875
+    assert config.algorithm.score_centering_normalize_rewards
+
+
+@pytest.mark.parametrize("field,value", [
+    ("enabled", "false"), ("warmup_updates", 0), ("warmup_updates", True),
+    ("min_mixed_groups", 1.5), ("target_share", float("nan")),
+    ("target_share", float("inf")), ("target_share", True), ("p99_cap", 0),
+    ("extractor", "unknown"),
+])
+def test_invalid_confidence_settings(field, value):
+    with pytest.raises(ConfigError, match="confidence"):
+        ConfidenceConfig(**{field: value}).validate()
+
+
+@pytest.mark.parametrize("fields", [
+    {"algorithm": {"name": "dapo"}}, {"max_turns": 2}, {"echo_alpha": .1},
+])
+def test_confidence_rejects_unsupported_training_paths(fields):
+    with pytest.raises(ConfigError, match="CONF"):
+        TrainConfig.from_mapping({**fields, "confidence": {"enabled": True}})
 
 
 def test_train_config_loads_toml_file(tmp_path) -> None:

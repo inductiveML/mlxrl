@@ -17,10 +17,23 @@ class GRPOAlgorithm:
     """Thin unclipped GRPO used by the Phase 1 reference path."""
 
     name: str = "grpo"
+    loss_reduction: str = "token_mean"
+
+    def __post_init__(self) -> None:
+        if self.loss_reduction not in {"token_mean", "sequence_mean"}:
+            raise ValueError("GRPO loss_reduction must be token_mean or sequence_mean.")
+
+    @property
+    def supports_token_advantages(self) -> bool:
+        return True
+
+    @property
+    def sequence_mean_reduction(self) -> bool:
+        return self.loss_reduction == "sequence_mean"
 
     @property
     def token_mean_reduction(self) -> bool:
-        return True
+        return self.loss_reduction == "token_mean"
 
     def compute_advantages(self, rewards: mx.array, group_structure: int) -> mx.array:
         return group_normalize_rewards(rewards, group_structure)
@@ -35,7 +48,7 @@ class GRPOAlgorithm:
         beta: float,
     ) -> AlgorithmLossMetrics:
         ratio = token_importance_ratio(policy_logprobs, old_policy_logprobs)
-        token_policy_gradient = -ratio * advantages[:, None]
+        token_policy_gradient = -ratio * token_advantages(advantages, policy_logprobs.shape)
         return _token_loss_metrics(
             token_policy_gradient=token_policy_gradient,
             ratio=ratio,
@@ -43,6 +56,7 @@ class GRPOAlgorithm:
             reference_logprobs=reference_logprobs,
             mask=completion_mask,
             beta=beta,
+            reduction=self.loss_reduction,
         )
 
     def advantages(self, rewards: mx.array, group_size: int) -> mx.array:
@@ -518,6 +532,15 @@ def filter_zero_advantage_groups(batch: Any, group_size: int) -> Any:
     return type(batch)(**filtered)
 
 
+def token_advantages(advantages: mx.array, shape: tuple[int, ...]) -> mx.array:
+    """Accept scalar-per-completion or explicit detached token advantages."""
+    if advantages.shape == (shape[0],):
+        return advantages[:, None]
+    if advantages.shape != shape:
+        raise ValueError("Token advantages must align with completion logprobs.")
+    return mx.stop_gradient(advantages)
+
+
 def _token_loss_metrics(
     token_policy_gradient: mx.array,
     ratio: mx.array,
@@ -526,21 +549,29 @@ def _token_loss_metrics(
     mask: mx.array,
     beta: float,
     clipped_ratio: mx.array | None = None,
+    reduction: str = "token_mean",
 ) -> AlgorithmLossMetrics:
     mask = mask.astype(mx.float32)
-    denominator = mx.maximum(mx.sum(mask), mx.array(1.0, dtype=mx.float32))
-    policy_gradient_loss = mx.sum(token_policy_gradient * mask) / denominator
+    def reduce(values: mx.array) -> mx.array:
+        if reduction == "sequence_mean":
+            lengths = mx.maximum(mx.sum(mask, axis=1), 1.0)
+            return mx.mean(mx.sum(values * mask, axis=1) / lengths)
+        if reduction != "token_mean":
+            raise ValueError("Unknown policy loss reduction.")
+        return masked_mean(values, mask)
+
+    policy_gradient_loss = reduce(token_policy_gradient)
     if beta == 0.0 and reference_logprobs is policy_logprobs:
         kl = mx.array(0.0, dtype=mx.float32)
     else:
         token_kl = approximate_kl(policy_logprobs, reference_logprobs)
-        kl = mx.sum(token_kl * mask) / denominator
-    mean_ratio = mx.sum(ratio * mask) / denominator
+        kl = reduce(token_kl)
+    mean_ratio = reduce(ratio)
     if clipped_ratio is None:
         clip_fraction = mx.array(0.0, dtype=mx.float32)
     else:
         clip_fraction = (
-            mx.sum(clip_indicator(ratio, clipped_ratio) * mask) / denominator
+            reduce(clip_indicator(ratio, clipped_ratio))
         )
     return AlgorithmLossMetrics(
         loss=policy_gradient_loss + beta * kl,

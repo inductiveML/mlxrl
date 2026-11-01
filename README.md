@@ -276,7 +276,9 @@ metrics = optimizer_step_trajectory(
 `micro_batch_size=0` keeps the original whole-batch path. Micro-batching is
 currently exact for token-mean policy losses: base GRPO, DAPO, GSPO token mode,
 RLOO, and Dr. GRPO with `loss_reduction="token_mean"`. Sequence-reduced losses
-should keep `micro_batch_size=0`.
+should keep `micro_batch_size=0`, except GRPO and score centering's explicit
+`sequence_mean` mode, which accumulates by completion count. CONF token credits
+support both of these reductions.
 
 ## ECHO World Modeling
 
@@ -379,6 +381,50 @@ large-model results do not establish a benefit for MLX QLoRA.
 The reproducible paired benchmark is `benchmarks/run_score_centering.py`; its
 protocol and measured results are in
 [the 4-bit benchmark report](benchmarks/results/score_centering_4bit_2026-10-30.md).
+
+### Experimental confidence warm start (CONF)
+
+CONF adds detached, centered step-confidence credit during the first eight
+optimizer updates, then continues with the selected base loss and optimizer.
+It is **experimental and disabled by default**. GRPO stays the default algorithm;
+score centering remains a separate opt-in.
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run mlxrl train \
+  --config examples/qwen3_0_6b_confidence.toml
+```
+
+The example uses explicit `step: expression = numeric_result` reasoning lines,
+four prompt groups per update, and per-completion loss averaging. To compare
+against its matched baseline, change only `[confidence] enabled = false`.
+The prompt format and loss reduction are independent settings and stay fixed.
+
+Confidence is the model's temperature-1 probability of the written result,
+computed with fp32 normalization before optimization. Each step receives
+`lambda * (confidence - token_weighted_mean_confidence)` on eligible reasoning
+tokens. Result tokens, final answers and padding receive no extra credit.
+Unscored or unalignable text contributes zero. This arithmetic reader does not
+validate correctness or infer steps from arbitrary prose.
+
+The default controller targets a credit share of `0.875`, caps its measured
+relative p99 at `10`, and holds the previous scale when fewer than four mixed
+groups carry credit. The cap is reapplied on held scales whenever measurable.
+With no initial calibration signal, credit stays zero. Logs expose the scale,
+actual share, scored steps, credited tokens and handoff; the output NPZ retains
+the credit history. Held scales can produce shares above or below the target.
+
+For custom tasks, supply completion-token spans through `ConfidenceStep` and
+`TokenSpan`; see [the Python integration and validation notes](docs/confidence.md).
+The initial integration supports single-turn GRPO and score centering. It does
+not support DAPO filtering, GiGPO, ECHO or multi-turn credit.
+
+RAMP's reported speedup is specific to its research setup. The MLX arithmetic
+screening harness is `benchmarks/run_confidence.py`; it compares all four
+combinations across seeds, including sampling and confidence overhead.
+The [12-run 4-bit screening](benchmarks/results/confidence_4bit_2026-11-01.md)
+found mixed outcomes: CONF raised final GRPO accuracy on two seeds and lowered it
+on one; with score centering it lowered accuracy on two seeds and tied on one.
+These short runs do not establish a reliable gain or a 2× speedup.
 
 ## Memory Preflight
 

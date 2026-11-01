@@ -25,14 +25,17 @@ from mlxrl.algo.grpo import (
 )
 from mlxrl.algo.score_centering import ScoreCenteringAlgorithm
 from mlxrl.algorithm import Algorithm
+from mlxrl.confidence import ConfidenceMetrics, ConfidenceWarmStart
 from mlxrl.config import (
     AlgorithmConfig,
+    ConfidenceConfig,
     ConfigError,
     TrainConfig,
     memory_fit,
     normalize_algorithm_name,
     validate_output_path,
 )
+from mlxrl.data.confidence import ARITHMETIC_CONFIDENCE_INSTRUCTION, arithmetic_steps
 from mlxrl.data.gsm8k import (
     MINI_GSM8K,
     format_gsm8k_answer_only_prompt,
@@ -139,6 +142,15 @@ def _gsm8k_prompt(args: argparse.Namespace, index: int) -> tuple[str, str]:
         if args.use_chat_template
         else format_gsm8k_answer_only_prompt(example)
     )
+    if getattr(args, "prompt_format", "default") == "arithmetic_steps":
+        prompt = (
+            "Solve the math problem." + ARITHMETIC_CONFIDENCE_INSTRUCTION
+            + "\n\nQuestion: Mia has 2 coins, gets 3 more, then spends 1. How many remain?"
+            "\nAnswer:\nstep: 2 + 3 = 5\nstep: 5 - 1 = 4\n<answer>4</answer>"
+            "\n\nQuestion: Sam buys 3 packs of 4 pens and gives away 2 pens. How many remain?"
+            "\nAnswer:\nstep: 3 * 4 = 12\nstep: 12 - 2 = 10\n<answer>10</answer>"
+            + "\n\nQuestion: " + example.question + "\nAnswer:\n"
+        )
     return prompt, example.answer
 
 
@@ -192,9 +204,13 @@ def _algorithm_from_algorithm_config(
 ) -> Algorithm:
     name = normalize_algorithm_name(algorithm.name)
     if name == "grpo":
-        return GRPOAlgorithm()
+        return GRPOAlgorithm(loss_reduction=algorithm.grpo_loss_reduction)
     if name == "score-centering":
-        return ScoreCenteringAlgorithm(sampler_top_k=algorithm.score_centering_top_k)
+        return ScoreCenteringAlgorithm(
+            sampler_top_k=algorithm.score_centering_top_k,
+            normalize_rewards=algorithm.score_centering_normalize_rewards,
+            loss_reduction=algorithm.score_centering_loss_reduction,
+        )
     if name == "dr-grpo":
         return DrGRPOAlgorithm(
             normalize_rewards=algorithm.drgrpo_normalize_rewards,
@@ -362,6 +378,9 @@ def _phase1_gsm8k(args: argparse.Namespace) -> int:
     sampling = replace(sampling, record_sampler_top_k=getattr(algorithm, "sampler_top_k", 0))
     print(f"algorithm: {algorithm.name}")
 
+    confidence = ConfidenceWarmStart(getattr(args, "confidence", ConfidenceConfig()))
+    confidence_history: list[ConfidenceMetrics] = []
+    groups_per_step = getattr(args, "groups_per_step", 1)
     reward_history: list[float] = []
     kl_history: list[float] = []
     final_batch = None
@@ -369,11 +388,12 @@ def _phase1_gsm8k(args: argparse.Namespace) -> int:
     final_completions = None
 
     for step in range(args.steps):
-        prompt, answer = _gsm8k_prompt(args, step)
+        items = [_gsm8k_prompt(args, step * groups_per_step + i) for i in range(groups_per_step)]
+        prompts, answers = zip(*items, strict=True)
         completions = generate_group_rollouts(
             model=model,
             tokenizer=tokenizer,
-            prompts=[prompt],
+            prompts=prompts,
             group_size=args.group_size,
             config=sampling,
             seed=args.seed + step,
@@ -383,7 +403,9 @@ def _phase1_gsm8k(args: argparse.Namespace) -> int:
         accuracies: list[float] = []
         formats: list[float] = []
         for completion in completions:
-            total, accuracy, fmt = _completion_reward(completion.text, answer)
+            total, accuracy, fmt = _completion_reward(
+                completion.text, answers[completion.prompt_index]
+            )
             rewards.append(total)
             accuracies.append(accuracy)
             formats.append(fmt)
@@ -397,7 +419,20 @@ def _phase1_gsm8k(args: argparse.Namespace) -> int:
             use_checkpoint=args.checkpoint_completion_forward,
             compute_reference=args.beta != 0.0,
             algorithm=algorithm,
+            record_confidence=confidence.active(step + 1),
         )
+        units = ([arithmetic_steps(tokenizer, c.completion_tokens) for c in completions]
+                 if confidence.active(step + 1) else [])
+        batch, conf_metrics = confidence.apply(
+            batch, units, update=step + 1, group_size=args.group_size, task_scores=accuracies
+        )
+        confidence_history.append(conf_metrics)
+        if confidence.config.enabled:
+            print(f"conf_update={step + 1} active={conf_metrics.active} "
+                  f"lambda={conf_metrics.scale:.6g} share={conf_metrics.share} "
+                  f"p99={conf_metrics.p99} scored_steps={conf_metrics.scored_steps} "
+                  f"credited_tokens={conf_metrics.credited_tokens} held={conf_metrics.held}",
+                  flush=True)
         metrics = optimizer_step(
             model=model,
             optimizer=optimizer,
@@ -458,6 +493,15 @@ def _phase1_gsm8k(args: argparse.Namespace) -> int:
         kl=mx.array(final_metrics.kl, dtype=mx.float32),
         clip_fraction=mx.array(final_metrics.clip_fraction, dtype=mx.float32),
         **({
+            "conf_updates": mx.array([m.update for m in confidence_history]),
+            "conf_lambda": mx.array([m.scale for m in confidence_history]),
+            "conf_scored_steps": mx.array([m.scored_steps for m in confidence_history]),
+            "conf_credited_tokens": mx.array([m.credited_tokens for m in confidence_history]),
+            "conf_previous_lambda": mx.array(confidence.previous_scale or 0.0),
+        } if confidence.config.enabled else {}),
+        **({"token_advantages": final_batch.token_advantages}
+           if final_batch.token_advantages is not None else {}),
+        **({
             "sampler_logprobs": final_batch.sampler.logprobs,
             "sampler_topk_ids": final_batch.sampler.topk_ids,
             "sampler_topk_logprobs": final_batch.sampler.topk_logprobs,
@@ -472,6 +516,9 @@ def _namespace_from_train_config(config: TrainConfig) -> argparse.Namespace:
         model=config.model_id,
         steps=config.steps,
         group_size=config.group_size,
+        groups_per_step=config.groups_per_step,
+        prompt_format=config.prompt_format,
+        confidence=config.confidence,
         max_tokens=config.max_completion_len,
         temperature=config.sampling.temperature,
         top_p=config.sampling.top_p,

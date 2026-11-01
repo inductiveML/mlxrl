@@ -1,0 +1,77 @@
+{
+  "source_sha256": "1ef24cd51e9abffcad8c9254b516040bfb1d84a2166288a31e5b1c57c3eb9bfe",
+  "model": "mlx-community/Qwen3-0.6B-4bit",
+  "model_revision": "73e3e38d981303bc594367cd910ea6eb48349da8",
+  "runs": {
+    "confidence_cli_final_2026-11-01": {
+      "all_artifact_values_finite": true,
+      "gradient_checkpointing": true,
+      "micro_batch_size": 2,
+      "has_token_advantages": false,
+      "conf_previous_lambda": 31.436779022216797,
+      "conf_updates": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "conf_credited_tokens": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        61,
+        0,
+        42,
+        0
+      ],
+      "conf_lambda": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        31.436779022216797,
+        31.436779022216797,
+        31.436779022216797,
+        0.0
+      ],
+      "conf_scored_steps": [
+        5,
+        6,
+        5,
+        6,
+        5,
+        7,
+        4,
+        6,
+        0
+      ]
+    },
+    "confidence_sc_cli_2026-11-01": {
+      "all_artifact_values_finite": true,
+      "gradient_checkpointing": true,
+      "micro_batch_size": 2,
+      "has_token_advantages": true,
+      "conf_previous_lambda": 2979.561767578125,
+      "conf_credited_tokens": [
+        166
+      ],
+      "conf_updates": [
+        1
+      ],
+      "conf_lambda": [
+        2979.561767578125
+      ],
+      "conf_scored_steps": [
+        21
+      ]
+    }
+  }
+}

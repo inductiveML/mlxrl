@@ -1,0 +1,419 @@
+{
+  "manifest": {
+    "kind": "manifest",
+    "source_sha256": "1ef24cd51e9abffcad8c9254b516040bfb1d84a2166288a31e5b1c57c3eb9bfe",
+    "model_revision": "73e3e38d981303bc594367cd910ea6eb48349da8",
+    "model_files_sha256": {
+      "model.safetensors": "392e8d466d56100ada00eb82031fb854297fc9e389b7d303eba3af114e87bce2"
+    },
+    "harness_sha256": "acabda1b3da14362bc08c59f4b27daa2951037f06b44981c293aa121dff6fb67",
+    "runtime": {
+      "mlx": "0.32.3",
+      "mlx-lm": "0.32.0"
+    },
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "order": [
+      [
+        17,
+        "grpo"
+      ],
+      [
+        7,
+        "sc-grpo"
+      ],
+      [
+        7,
+        "sc-grpo-conf"
+      ],
+      [
+        27,
+        "grpo-conf"
+      ],
+      [
+        27,
+        "grpo"
+      ],
+      [
+        17,
+        "sc-grpo-conf"
+      ],
+      [
+        17,
+        "grpo-conf"
+      ],
+      [
+        7,
+        "grpo"
+      ],
+      [
+        17,
+        "sc-grpo"
+      ],
+      [
+        27,
+        "sc-grpo"
+      ],
+      [
+        7,
+        "grpo-conf"
+      ],
+      [
+        27,
+        "sc-grpo-conf"
+      ]
+    ],
+    "steps": 16,
+    "max_tokens": 64,
+    "learning_rate": 1e-05,
+    "train_cases": [
+      [
+        19,
+        7,
+        4
+      ],
+      [
+        23,
+        3,
+        8
+      ],
+      [
+        17,
+        4,
+        6
+      ],
+      [
+        12,
+        6,
+        -5
+      ],
+      [
+        28,
+        2,
+        9
+      ],
+      [
+        31,
+        3,
+        -8
+      ],
+      [
+        26,
+        4,
+        7
+      ],
+      [
+        14,
+        9,
+        -3
+      ]
+    ],
+    "eval_cases": [
+      [
+        16,
+        7,
+        2
+      ],
+      [
+        22,
+        3,
+        5
+      ],
+      [
+        18,
+        4,
+        -7
+      ],
+      [
+        13,
+        6,
+        -4
+      ],
+      [
+        27,
+        2,
+        8
+      ],
+      [
+        32,
+        3,
+        -9
+      ],
+      [
+        25,
+        4,
+        6
+      ],
+      [
+        15,
+        9,
+        -2
+      ]
+    ],
+    "scope": "Short arithmetic screening; does not establish a 2x speedup."
+  },
+  "source_commit": "d4b970e08bc80cf237bd178aa1edd830794fcade",
+  "integrity": {
+    "runs": 12,
+    "updates": 192,
+    "finite_diagnostics": true,
+    "handoff_verified": true,
+    "source_and_harness_fingerprints_match": true,
+    "initial_first_completion_matches_across_arms": true,
+    "restarted_run_matches_interrupted_prefix_except_timing": true
+  },
+  "methods": [
+    {
+      "method": "grpo",
+      "initial_accuracy_mean": 0.5,
+      "warm_end_accuracy_mean": 0.5,
+      "final_accuracy_mean": 0.4166666666666667,
+      "final_accuracy_sample_std": 0.3608439182435161,
+      "training_seconds_mean": 94.74021779078369
+    },
+    {
+      "method": "grpo-conf",
+      "initial_accuracy_mean": 0.5,
+      "warm_end_accuracy_mean": 0.5416666666666666,
+      "final_accuracy_mean": 0.5416666666666666,
+      "final_accuracy_sample_std": 0.5051814855409226,
+      "training_seconds_mean": 89.03550859633833
+    },
+    {
+      "method": "sc-grpo",
+      "initial_accuracy_mean": 0.5,
+      "warm_end_accuracy_mean": 0.375,
+      "final_accuracy_mean": 0.4583333333333333,
+      "final_accuracy_sample_std": 0.43898557303553076,
+      "training_seconds_mean": 100.63389844354242
+    },
+    {
+      "method": "sc-grpo-conf",
+      "initial_accuracy_mean": 0.5,
+      "warm_end_accuracy_mean": 0.5416666666666666,
+      "final_accuracy_mean": 0.25,
+      "final_accuracy_sample_std": 0.25,
+      "training_seconds_mean": 93.24235549941659
+    }
+  ],
+  "runs": [
+    {
+      "method": "grpo",
+      "seed": 7,
+      "initial_accuracy": 0.5,
+      "warm_end_accuracy": 0.0,
+      "final_accuracy": 0.0,
+      "training_seconds": 109.67866325122304,
+      "generated_tokens": 8192,
+      "active_updates": 0,
+      "updates_with_credit": 0,
+      "held_updates": 0,
+      "capped_updates": 0,
+      "max_measured_p99": 0,
+      "credited_tokens": 0
+    },
+    {
+      "method": "grpo",
+      "seed": 17,
+      "initial_accuracy": 0.5,
+      "warm_end_accuracy": 0.75,
+      "final_accuracy": 0.625,
+      "training_seconds": 85.60866649681702,
+      "generated_tokens": 8192,
+      "active_updates": 0,
+      "updates_with_credit": 0,
+      "held_updates": 0,
+      "capped_updates": 0,
+      "max_measured_p99": 0,
+      "credited_tokens": 0
+    },
+    {
+      "method": "grpo",
+      "seed": 27,
+      "initial_accuracy": 0.5,
+      "warm_end_accuracy": 0.75,
+      "final_accuracy": 0.625,
+      "training_seconds": 88.93332362431102,
+      "generated_tokens": 8192,
+      "active_updates": 0,
+      "updates_with_credit": 0,
+      "held_updates": 0,
+      "capped_updates": 0,
+      "max_measured_p99": 0,
+      "credited_tokens": 0
+    },
+    {
+      "method": "grpo-conf",
+      "seed": 7,
+      "initial_accuracy": 0.5,
+      "warm_end_accuracy": 0.625,
+      "final_accuracy": 0.625,
+      "training_seconds": 81.81342479097657,
+      "generated_tokens": 8192,
+      "active_updates": 8,
+      "updates_with_credit": 8,
+      "held_updates": 4,
+      "capped_updates": 1,
+      "max_measured_p99": 10.0,
+      "credited_tokens": 1017
+    },
+    {
+      "method": "grpo-conf",
+      "seed": 17,
+      "initial_accuracy": 0.5,
+      "warm_end_accuracy": 1.0,
+      "final_accuracy": 1.0,
+      "training_seconds": 97.55351604055613,
+      "generated_tokens": 8192,
+      "active_updates": 8,
+      "updates_with_credit": 8,
+      "held_updates": 7,
+      "capped_updates": 0,
+      "max_measured_p99": 5.603981586240905,
+      "credited_tokens": 1556
+    },
+    {
+      "method": "grpo-conf",
+      "seed": 27,
+      "initial_accuracy": 0.5,
+      "warm_end_accuracy": 0.0,
+      "final_accuracy": 0.0,
+      "training_seconds": 87.7395849574823,
+      "generated_tokens": 8192,
+      "active_updates": 8,
+      "updates_with_credit": 8,
+      "held_updates": 5,
+      "capped_updates": 2,
+      "max_measured_p99": 10.0,
+      "credited_tokens": 1367
+    },
+    {
+      "method": "sc-grpo",
+      "seed": 7,
+      "initial_accuracy": 0.5,
+      "warm_end_accuracy": 0.0,
+      "final_accuracy": 0.5,
+      "training_seconds": 85.92924033431336,
+      "generated_tokens": 8192,
+      "active_updates": 0,
+      "updates_with_credit": 0,
+      "held_updates": 0,
+      "capped_updates": 0,
+      "max_measured_p99": 0,
+      "credited_tokens": 0
+    },
+    {
+      "method": "sc-grpo",
+      "seed": 17,
+      "initial_accuracy": 0.5,
+      "warm_end_accuracy": 0.875,
+      "final_accuracy": 0.875,
+      "training_seconds": 112.14283370575868,
+      "generated_tokens": 8192,
+      "active_updates": 0,
+      "updates_with_credit": 0,
+      "held_updates": 0,
+      "capped_updates": 0,
+      "max_measured_p99": 0,
+      "credited_tokens": 0
+    },
+    {
+      "method": "sc-grpo",
+      "seed": 27,
+      "initial_accuracy": 0.5,
+      "warm_end_accuracy": 0.25,
+      "final_accuracy": 0.0,
+      "training_seconds": 103.82962129055522,
+      "generated_tokens": 8192,
+      "active_updates": 0,
+      "updates_with_credit": 0,
+      "held_updates": 0,
+      "capped_updates": 0,
+      "max_measured_p99": 0,
+      "credited_tokens": 0
+    },
+    {
+      "method": "sc-grpo-conf",
+      "seed": 7,
+      "initial_accuracy": 0.5,
+      "warm_end_accuracy": 0.5,
+      "final_accuracy": 0.25,
+      "training_seconds": 100.18225196003914,
+      "generated_tokens": 8192,
+      "active_updates": 8,
+      "updates_with_credit": 7,
+      "held_updates": 5,
+      "capped_updates": 1,
+      "max_measured_p99": 10.0,
+      "credited_tokens": 943
+    },
+    {
+      "method": "sc-grpo-conf",
+      "seed": 17,
+      "initial_accuracy": 0.5,
+      "warm_end_accuracy": 1.0,
+      "final_accuracy": 0.5,
+      "training_seconds": 88.1286936646793,
+      "generated_tokens": 8192,
+      "active_updates": 8,
+      "updates_with_credit": 8,
+      "held_updates": 7,
+      "capped_updates": 0,
+      "max_measured_p99": 5.603981586240905,
+      "credited_tokens": 1560
+    },
+    {
+      "method": "sc-grpo-conf",
+      "seed": 27,
+      "initial_accuracy": 0.5,
+      "warm_end_accuracy": 0.125,
+      "final_accuracy": 0.0,
+      "training_seconds": 91.41612087353133,
+      "generated_tokens": 8192,
+      "active_updates": 8,
+      "updates_with_credit": 8,
+      "held_updates": 7,
+      "capped_updates": 3,
+      "max_measured_p99": 10.0,
+      "credited_tokens": 1309
+    }
+  ],
+  "paired_differences": {
+    "grpo": [
+      {
+        "seed": 7,
+        "final_accuracy_delta": 0.625
+      },
+      {
+        "seed": 17,
+        "final_accuracy_delta": 0.375
+      },
+      {
+        "seed": 27,
+        "final_accuracy_delta": -0.625
+      }
+    ],
+    "sc-grpo": [
+      {
+        "seed": 7,
+        "final_accuracy_delta": -0.25
+      },
+      {
+        "seed": 17,
+        "final_accuracy_delta": -0.375
+      },
+      {
+        "seed": 27,
+        "final_accuracy_delta": 0.0
+      }
+    ]
+  },
+  "execution_notes": {
+    "user_requested_pause_after_complete_runs": 10,
+    "restarted_from_update_one": {
+      "method": "grpo-conf",
+      "seed": 7
+    },
+    "interrupted_rows_excluded_from_final_results": true,
+    "interrupted_artifact": "confidence_4bit_2026-11-01.interrupted.jsonl"
+  }
+}

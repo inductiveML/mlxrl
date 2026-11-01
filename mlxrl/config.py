@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import tomllib
 from dataclasses import dataclass, field, replace
@@ -60,8 +61,16 @@ class AlgorithmConfig:
     gigpo_gamma: float = 1.0
     gigpo_normalization: str = "std"
     score_centering_top_k: int = 128
+    grpo_loss_reduction: str = "token_mean"
+    score_centering_loss_reduction: str = "token_mean"
+    score_centering_normalize_rewards: bool = False
 
     def validate(self) -> None:
+        for value in (self.grpo_loss_reduction, self.score_centering_loss_reduction):
+            if value not in {"token_mean", "sequence_mean"}:
+                raise ConfigError("Loss reduction must be token_mean or sequence_mean.")
+        if type(self.score_centering_normalize_rewards) is not bool:
+            raise ConfigError("score_centering_normalize_rewards must be a boolean.")
         normalized = normalize_algorithm_name(self.name)
         if normalized not in {
             "grpo", "dr-grpo", "dapo", "gspo", "rloo", "gigpo", "score-centering"
@@ -94,10 +103,39 @@ class AlgorithmConfig:
 
 
 @dataclass(frozen=True)
+class ConfidenceConfig:
+    """Experimental CONF credit; all defaults leave training unchanged."""
+
+    enabled: bool = False
+    warmup_updates: int = 8
+    target_share: float = 0.875
+    p99_cap: float = 10.0
+    min_mixed_groups: int = 4
+    extractor: str = "arithmetic"
+
+    def validate(self) -> None:
+        if type(self.enabled) is not bool:
+            raise ConfigError("confidence.enabled must be a boolean.")
+        for key in ("warmup_updates", "min_mixed_groups"):
+            value = getattr(self, key)
+            if type(value) is not int or value < 1:
+                raise ConfigError(f"confidence.{key} must be a positive integer.")
+        for key in ("target_share", "p99_cap"):
+            value = getattr(self, key)
+            if (isinstance(value, bool) or not isinstance(value, (float, int))
+                    or not math.isfinite(value) or value <= 0):
+                raise ConfigError(f"confidence.{key} must be finite and positive.")
+        if self.extractor != "arithmetic":
+            raise ConfigError("confidence.extractor must be arithmetic.")
+
+
+@dataclass(frozen=True)
 class TrainConfig:
     model_id: str = "mlx-community/Qwen3-0.6B-4bit"
     quant_bits: int = 4
     group_size: int = 4
+    groups_per_step: int = 1
+    prompt_format: str = "default"
     max_completion_len: int = 256
     max_prompt_len: int = 4096
     max_turns: int = 1
@@ -122,14 +160,21 @@ class TrainConfig:
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     sampling: SamplingConfigData = field(default_factory=SamplingConfigData)
     algorithm: AlgorithmConfig = field(default_factory=AlgorithmConfig)
+    confidence: ConfidenceConfig = field(default_factory=ConfidenceConfig)
 
     def validate(self) -> None:
+        if self.prompt_format not in {"default", "arithmetic_steps"}:
+            raise ConfigError("prompt_format must be default or arithmetic_steps.")
         if not self.model_id:
             raise ConfigError("model_id must be non-empty.")
         if self.quant_bits not in {4, 8, 16}:
             raise ConfigError("quant_bits must be one of: 4, 8, 16.")
         if self.group_size < 1:
             raise ConfigError("group_size must be at least 1.")
+        if type(self.groups_per_step) is not int or self.groups_per_step < 1:
+            raise ConfigError("groups_per_step must be a positive integer.")
+        if self.groups_per_step != 1 and self.max_turns != 1:
+            raise ConfigError("groups_per_step currently supports single-turn training only.")
         if self.max_completion_len < 1:
             raise ConfigError("max_completion_len must be at least 1.")
         if self.max_prompt_len < 1:
@@ -172,6 +217,12 @@ class TrainConfig:
         self.optimizer.validate()
         self.sampling.validate()
         self.algorithm.validate()
+        self.confidence.validate()
+        if self.confidence.enabled and (
+            normalize_algorithm_name(self.algorithm.name) not in {"grpo", "score-centering"}
+            or self.max_turns != 1 or self.echo_alpha != 0
+        ):
+            raise ConfigError("CONF supports single-turn GRPO or score-centering only.")
         if normalize_algorithm_name(self.algorithm.name) == "score-centering" and (
             self.max_turns != 1 or self.echo_alpha != 0
         ):
@@ -183,16 +234,18 @@ class TrainConfig:
             optimizer = OptimizerConfig(**dict(raw.get("optimizer", {})))
             sampling = SamplingConfigData(**dict(raw.get("sampling", {})))
             algorithm = AlgorithmConfig(**dict(raw.get("algorithm", {})))
+            confidence = ConfidenceConfig(**dict(raw.get("confidence", {})))
             top_level = {
                 key: value
                 for key, value in raw.items()
-                if key not in {"optimizer", "sampling", "algorithm"}
+                if key not in {"optimizer", "sampling", "algorithm", "confidence"}
             }
             config = cls(
                 **top_level,
                 optimizer=optimizer,
                 sampling=sampling,
                 algorithm=algorithm,
+                confidence=confidence,
             )
         except TypeError as error:
             raise ConfigError(f"invalid config field: {error}") from error
@@ -344,6 +397,8 @@ def memory_reduction_hint(config: TrainConfig) -> str | None:
 
 
 def _near_measured_anchor(config: TrainConfig) -> bool:
+    if config.groups_per_step != 1:
+        return False
     sequence_len = effective_sequence_length(config)
     if (
         config.model_id == "mlx-community/Qwen3-0.6B-4bit"
@@ -395,7 +450,7 @@ def _estimate_qwen35_9b_peak_gb(
 def _memory_group_size(config: TrainConfig) -> int:
     if config.max_turns > 1 and config.rollout_mode == "sequential":
         return max(1, min(config.group_size, config.micro_batch_size or 1))
-    return config.group_size
+    return config.group_size * config.groups_per_step
 
 
 def memory_fit(config: TrainConfig, available_unified_memory_gb: float) -> MemoryEstimate:
