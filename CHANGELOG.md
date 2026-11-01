@@ -7,6 +7,15 @@ and this project uses semantic versioning once releases are cut.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-01
+
+CONF is experimental and disabled by default. Enable it explicitly with
+`[confidence] enabled = true`. GRPO remains the default algorithm, and score
+centering remains a separate opt-in. The 12 local 4-bit runs have mixed results
+and do not establish a reliable quality gain or a 2× time-to-target speedup;
+the score-centering combination regresses in this small screening fixture.
+See the [complete benchmark report](benchmarks/results/confidence_4bit_2026-11-01.md).
+
 ### Added
 
 - Experimental, opt-in CONF warm-start credit for single-turn GRPO and score
