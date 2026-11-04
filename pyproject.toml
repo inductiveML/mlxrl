@@ -40,7 +40,7 @@ dev = [
     "ruff>=0.8.0",
 ]
 ci = [
-    "hatchling==1.32.4",
+    "hatchling==1.33.0",
     "pip-audit==2.10.1",
     "pyright>=1.1.390",
     "pytest>=8.3.0",
@@ -49,7 +49,7 @@ ci = [
 ]
 
 [build-system]
-requires = ["hatchling==1.32.4"]
+requires = ["hatchling==1.33.0"]
 build-backend = "hatchling.build"
 
 [tool.uv]
