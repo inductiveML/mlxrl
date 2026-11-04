@@ -1437,7 +1437,7 @@ wheels = [
 
 [[package]]
 name = "mlx-lm-lora"
-version = "5.8.6"
+version = "5.10.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "datasets" },
@@ -1451,9 +1451,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "transformers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/27/3b/d18faa571d815fc2cc4649cc076e8e3e178c94ed63f84efdb23ce88a23ab/mlx_lm_lora-5.8.6.tar.gz", hash = "sha256:bc8a82729a0b159f996819c99443467993c345ff7c30a95e77eff8f0b87a900a", size = 2459177, upload-time = "2026-10-05T10:08:03.83Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fe/91/75ff3a6dba5bce18b65ba2fbfb301dd756276009fd03f6d7c7b70d643cb7/mlx_lm_lora-5.10.2.tar.gz", hash = "sha256:1504208dac41b018fb3459956216ce53c934e0b9261735147203c0d48d20fd0a", size = 2482292, upload-time = "2026-10-26T10:08:52.496Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9e/08/321875ecbb523c02300d98eb124c7e854b77994583085d2fcaae851d0439/mlx_lm_lora-5.8.6-py3-none-any.whl", hash = "sha256:1cf636b19c1e8b6e5214e548b4fa470b3fccf6e921bb92aedfd69310a9c7e78a", size = 132048, upload-time = "2026-10-05T10:08:02.484Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/a2/59fb4f3cdebe59d8394456c1e2777a158e314feffe5a4fcd381b76a8554e/mlx_lm_lora-5.10.2-py3-none-any.whl", hash = "sha256:73530e7de0ed362e3eb3e052d02d6020c5f3a12101aa5e24e1ce57f47feb878f", size = 145068, upload-time = "2026-10-26T10:08:50.645Z" },
 ]
 
 [[package]]
