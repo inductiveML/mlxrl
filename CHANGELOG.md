@@ -7,6 +7,16 @@ and this project uses semantic versioning once releases are cut.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-18
+
+### Changed
+
+- Update the locked build and CI tools to Hatchling 1.33.0, pytest 9.2.0,
+  Ruff 0.17.4, and setup-uv 10.3.3.
+- Update the locked benchmark dependencies to mlx-lm-lora 5.10.2 and
+  OpenTelemetry API 1.45.2. The latter limits the length of incoming
+  `traceparent` headers.
+
 ## [0.4.0] - 2026-11-01
 
 CONF is experimental and disabled by default. Enable it explicitly with
